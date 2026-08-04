@@ -22,7 +22,7 @@
 |---|---|
 | 运行环境 / 实现语言 | C/C++ 同进程,直接操作内存中的 C 结构体 |
 | 用户描述形式 | JSON 配置文件描述"组装配方" |
-| name 注册机制 | 混合:代码注册"名字词汇表"(name→访问器,需 C 类型知识),配置只写"配方" |
+| name 注册机制 | 构建期 codegen 生成"名字词汇表":描述文件(JSON)→ Python 工具 → `REGISTER_*` 代码(引用 `&T::field`,编译期校验);配置只写"配方"(运行时热加载)。两者正交 |
 | 连接符 | 启动时注册的"连接符库"(name→字面量/格式化器),属"服务提供" |
 | 设备信息 | 运行时传入的"设备上下文"对象,值随每次调用带入 |
 | 配置加载 | 动态运行时加载(可热加载/替换配方),框架始终服务最新版本 |
@@ -40,7 +40,7 @@
 
 | 注册表 | 内容 | 何时填 |
 |---|---|---|
-| `NameRegistry` | name → `ValueProvider`(标量字段访问器 或 复合结构块) | 启动时代码注册,需 C 类型知识 |
+| `NameRegistry` | name → `ValueProvider`(标量字段访问器 或 复合结构块) | 启动时由 **codegen 生成的代码**注册(见 6.1),需 C 类型知识 |
 | `ConnectorLib` | 连接符名 → 字面量字符串 / 格式化器 | 启动时代码注册,属"服务提供" |
 | `DeviceCtx` | 设备信息字段的固定接口(ID/名称/IP/通道等 getter) | 启动时定义接口,值运行时带入 |
 
@@ -198,6 +198,7 @@ class StructBlockProvider : public ValueProvider {
 
 ```cpp
 // name → ValueProvider(标量 或 结构体块),加载时校验用、编译后 ValueProvider 绑进 Step
+// 注意:register* 调用不由人手写 —— 由构建期 codegen 从描述文件生成(见第 6.1 节)
 class NameRegistry {
     std::unordered_map<std::string, std::unique_ptr<ValueProvider>> entries_;
 public:
@@ -319,44 +320,101 @@ std::string Engine::render(const std::string& recipeName,
 
 ## 6. 扩展点与"易上手"接口
 
-### 6.1 开发者扩展面(加新结构体/字段时动代码)
+### 6.1 词汇表生成:描述文件 + 构建期 codegen
 
-遵循"改词汇表要写代码,改配方只改配置"。扩展点全部通过**注册宏 + 模板**暴露,无需改框架核心:
+词汇表(`NameRegistry` 的填充)不由人手写 `REGISTER_*` 宏 —— 那是堆易错样板代码。改为**单一声明式描述文件 + 构建期 Python codegen 工具**自动生成注册代码。
+
+**两段式生成链:**
+
+```
+上游 .h (结构体布局源)          ← 真理之源,人只读不改
+   │  开发者照 .h 手写镜像
+   ▼
+描述文件 (schema.json)          ← 声明式:字段布局 + 元数据(友好名/格式器/块标注)
+   │  构建期:python gen_registry.py schema.json
+   ▼
+registry_gen.cpp               ← 生成的 REGISTER_* 调用(引用 &T::field)
+   │  C++ 编译
+   ▼
+启动期填充 NameRegistry          ← 运行时对象,与 recipe 热加载正交
+```
+
+**描述文件格式(JSON,与 recipe 配置同系,复用一套解析心智):**
+
+```json
+{
+  "structs": [
+    {
+      "name": "Event",
+      "members": [
+        { "field": "timestamp", "as": "time", "fmt": "%llu" },
+        { "block": "person",    "subRecipe": "person" },
+        { "block": "rect",      "subRecipe": "rect" }
+      ]
+    },
+    {
+      "name": "PersonInfo",
+      "members": [
+        { "field": "name", "as": "name", "fmt": "%s" },
+        { "field": "age",  "as": "age",  "fmt": "%d" }
+      ]
+    },
+    {
+      "name": "Box",
+      "members": [
+        { "field": "x", "fmt": "%d" }, { "field": "y", "fmt": "%d" },
+        { "field": "w", "fmt": "%d" }, { "field": "h", "fmt": "%d" }
+      ]
+    }
+  ],
+  "device": [
+    { "getter": "cameraId", "as": "camera" }
+  ]
+}
+```
+
+字段语义:
+
+- `field` = 真实 C 成员名(codegen 据此写 `&Struct::field`);`as` = 暴露给配方的友好名,省略则默认取 `field`。
+- `block` = 结构体块,带 `subRecipe` 指向同份 recipe 配置里的子配方名。**指针 vs 内嵌由 codegen 用模板自动判定**(描述文件不写,减小心智负担)—— codegen 生成 `REGISTER_STRUCT` 时根据成员类型选择内嵌导航或指针解引用。
+- `device` = 设备信息 getter(codegen 生成 `REGISTER_DEVICE`)。
+- `fmt` = 标量格式器(`%llu` / `%s` / `%d` …)。
+
+**codegen 产物(示意,registry_gen.cpp 头注"请勿手改"):**
 
 ```cpp
-// 启动期:填充三个注册表(框架核心一无所知具体业务)
-
-// 标量字段:绑结构体类型 + 字段 + 格式器
-REGISTER_FIELD("time", Event, timestamp, "%llu");
-REGISTER_FIELD("name", PersonInfo, name,  "%s");
-REGISTER_FIELD("age",  PersonInfo, age,   "%d");
-REGISTER_FIELD("x",    Box, x, "%d");   // y/w/h 同理
-
-// 结构体块:绑导航路径 + 子配方名(子配方在同份配置里定义)
-REGISTER_STRUCT("person", Event, person, "person");   // → person 子配方
-REGISTER_STRUCT("rect",   Event, rect,   "rect");     // → rect 子配方
-
-// 连接符库:服务提供
-REGISTER_CONNECTOR("dash", "-");
-REGISTER_CONNECTOR("colon", ":");
-
-// 设备信息接口:启动时定义 getter,值运行时带
-// (DeviceCtx 是用户提供的类型,框架只认其 getter)
+// 自动生成 — 请勿手改
+REGISTER_FIELD ("time",   Event,      timestamp, "%llu");
+REGISTER_STRUCT("person", Event,      person,    "person");
+REGISTER_STRUCT("rect",   Event,      rect,      "rect");
+REGISTER_FIELD ("name",   PersonInfo, name,      "%s");
+REGISTER_FIELD ("age",    PersonInfo, age,       "%d");
+REGISTER_FIELD ("x",      Box,        x,         "%d");
+REGISTER_FIELD ("y",      Box,        y,         "%d");
+REGISTER_FIELD ("w",      Box,        w,         "%d");
+REGISTER_FIELD ("h",      Box,        h,         "%d");
+REGISTER_DEVICE("camera", DeviceCtx,  cameraId);
 ```
+
+**编译期同步兜底(关键安全保障):** 生成的代码引用真实字段 `&T::field`。上游 `.h` 一旦改字段名 / 删字段 / 改类型 → 生成代码编译失败 → 漂移即时暴露在构建期,**不会带到运行时**。描述文件与 `.h` 的一致性由 C++ 编译器兜底,无需运行时反射或偏移手填。
+
+**为何不直接解析 .h:** 解析真实 C 头文件需 libclang(重)或自写解析器(脆弱,宏/预处理难处理),且 `.h` 不含格式器 / 块标注等元数据,仍需补注解。手写镜像描述文件 + 编译期校验,是最轻量且类型安全的折中 —— 多一份镜像,换回零 C 解析依赖 + 编译期漂移兜底。
+
+### 6.2 开发者扩展工作流
 
 扩展场景的工作流(全部隔离,互不影响):
 
-| 要加什么 | 动什么 | 框架核心 |
-|---|---|---|
-| 新字段 | 加一行 `REGISTER_FIELD` | 不动 |
-| 新结构体块 | 加 `REGISTER_STRUCT` + 配置加子配方 | 不动 |
-| 新连接符 | 加一行 `REGISTER_CONNECTOR` | 不动 |
-| 新设备信息 | `DeviceCtx` 加 getter + 注册 | 不动 |
-| 新组装格式 | **只改 JSON 配置,不重编译** | 不动 |
+| 要加什么 | 动什么 | 重编译? | 框架核心 |
+|---|---|---|---|
+| 新字段 | 描述文件加一行 `field` | 是(codegen→编译,`&T::field` 校验) | 不动 |
+| 新结构体块 | 描述文件加 `block` + recipe 配置加子配方 | 是 | 不动 |
+| 新连接符 | `ConnectorLib` 加一行 | 是 | 不动 |
+| 新设备信息 | `DeviceCtx` 加 getter + 描述文件 `device` 加一行 | 是 | 不动 |
+| **新组装格式** | **只改 recipe JSON 配置** | **否(热加载)** | 不动 |
 
-后两行是"易上手 / 易拓展"的精髓 —— **新增一种输出格式零编译**,加新结构体也只是加注册行,框架核心 `Engine` / `Recipe` / `Step` 全程不知情。
+结构体布局相对静态(上游改结构体本就要重编译),故词汇表走构建期 codegen 合理;配方频繁变更,走运行时热加载。两者各得其所。最后一行是"易上手 / 易拓展"的精髓 —— **新增一种输出格式零编译**;加新结构体也只是描述文件加一行 + 重跑 codegen,框架核心 `Engine` / `Recipe` / `Step` 全程不知情。
 
-### 6.2 用户使用面(最小心智负担)
+### 6.3 用户使用面(最小心智负担)
 
 用户只需懂三件事:
 
@@ -364,14 +422,16 @@ REGISTER_CONNECTOR("colon", ":");
 2. 其余字符是连接符,原样输出。
 3. 结构体块内部用同名子配方展开(用户写子配方和写主配方没区别)。
 
-不需要懂:访问器、导航、虚函数、Recipe、Step、注册表内部、热加载。这些全是开发者/框架内部的事。
+不需要懂:访问器、导航、虚函数、Recipe、Step、注册表内部、codegen、热加载。这些全是开发者/框架内部的事。
 
-### 6.3 公开 API(最简)
+### 6.4 公开 API(最简)
 
 ```cpp
 class Engine {
 public:
-    // 启动期:注入已填充好的两个注册表(NameRegistry, ConnectorLib)
+    // 启动期:注入已填充好的两个注册表
+    //   NameRegistry —— 由 codegen 生成的 initNameRegistry() 填充(见 6.1)
+    //   ConnectorLib —— 启动期代码填充
     Engine(NameRegistry&, ConnectorLib&);
 
     // 运行期:加载/重载配置 → 编译 → 原子发布;返回错误清单(成功则空)
@@ -390,6 +450,7 @@ public:
 
 - **C++17**(`std::variant` / `std::string_view` / `std::shared_ptr` 可用)。
 - **JSON 解析依赖**:用轻量单文件库(如 cJSON / nlohmann::json),不引入大依赖。解析只在加载时发生,热路径零解析。
+- **构建期 codegen 工具**:Python 脚本(`gen_registry.py`),构建期运行,读描述文件产出 `registry_gen.cpp`。仅构建期依赖,不进运行时。
 - **无外部运行时依赖**:热路径纯标准库 + 内存操作,适合安防嵌入式同进程场景。
 - **线程模型**:`RecipeStore` 用 `std::shared_ptr` 原子替换实现无锁热加载;`Engine::render` 只读快照,多线程可并发 render 同一/不同配方,互不阻塞。
 
@@ -400,6 +461,7 @@ public:
 - **编译层**:AST→Recipe 绑定正确性,绑定的访问器/getter 指向预期。
 - **执行层**:完整安防示例(Event/PersonInfo/Box 嵌套),验证拼接结果字节级正确;嵌套递归(结构体块内再嵌结构体块)。
 - **热加载**:并发 render 同时替换配方,验证旧版读者不被破坏、新版即时生效、无内存竞争(用线程消毒器验证)。
+- **codegen 层(对应 6.1)**:描述文件 → 生成的 `registry_gen.cpp` 内容正确(字段名/格式器/块标注映射);生成的代码引用的 `&T::field` 在 `.h` 改名后**编译失败**(验证漂移兜底);指针 vs 内嵌结构体块的导航代码分支正确。
 - **基准测试(对应 3.2 双轨)**:路线 A(显式四类 Step)vs 路线 B(统一 ValueProvider*),在真实安防结构体规模下对比热路径耗时,以此决断 Step 表示方式。基准结果记入实现说明。
 
 ## 9. 端到端示例
@@ -425,13 +487,43 @@ typedef struct {
 
 > 设备信息(如 camera_id)不放进业务结构体,归 `DeviceCtx` —— 它是"服务提供"的通用设备信息,与具体事件结构体解耦。
 
-开发者注册:
+开发者照 `.h` 写描述文件(schema.json,见 6.1):
+
+```json
+{
+  "structs": [
+    { "name": "Event", "members": [
+        { "field": "timestamp", "as": "time", "fmt": "%llu" },
+        { "block": "person",    "subRecipe": "person" },
+        { "block": "rect",      "subRecipe": "rect" }
+    ]},
+    { "name": "PersonInfo", "members": [
+        { "field": "name", "fmt": "%s" },
+        { "field": "age",  "fmt": "%d" }
+    ]},
+    { "name": "Box", "members": [
+        { "field": "x", "fmt": "%d" }, { "field": "y", "fmt": "%d" },
+        { "field": "w", "fmt": "%d" }, { "field": "h", "fmt": "%d" }
+    ]}
+  ],
+  "device": [ { "getter": "cameraId", "as": "camera" } ]
+}
+```
+
+构建期 codegen(`python gen_registry.py schema.json`)产出 `registry_gen.cpp`:
 
 ```cpp
-REGISTER_FIELD("time",    Event, timestamp, "%llu");
-REGISTER_STRUCT("person", Event, person,  "person");
-REGISTER_STRUCT("rect",   Event, rect,    "rect");
-REGISTER_DEVICE("camera", DeviceCtx, camera_id);   // 设备信息,运行时带值
+// 自动生成 — 请勿手改
+REGISTER_FIELD ("time",   Event,      timestamp, "%llu");
+REGISTER_STRUCT("person", Event,      person,    "person");
+REGISTER_STRUCT("rect",   Event,      rect,      "rect");
+REGISTER_FIELD ("name",   PersonInfo, name,      "%s");
+REGISTER_FIELD ("age",    PersonInfo, age,       "%d");
+REGISTER_FIELD ("x",      Box,        x,         "%d");
+REGISTER_FIELD ("y",      Box,        y,         "%d");
+REGISTER_FIELD ("w",      Box,        w,         "%d");
+REGISTER_FIELD ("h",      Box,        h,         "%d");
+REGISTER_DEVICE("camera", DeviceCtx,  cameraId);   // 设备信息,运行时带值
 ```
 
 用户配置:
@@ -460,7 +552,8 @@ render("alarm_line", &event, deviceCtx)
 - 不做条件分支、循环、表达式(配置保持极简模板语法)。
 - 不做跨文件 include(配方同文件混排)。
 - 不做每请求重新解析传进来的配置文本(加载时编译,运行时零解析)。
-- 不做 codegen / JIT(与动态加载 + 安防嵌入式场景冲突)。
+- 不做**运行时** codegen / JIT(与动态加载 + 安防嵌入式场景冲突)。注意:构建期 codegen(描述文件→`registry_gen.cpp`)**做**,且不冲突 —— 它只是构建期代码生成器产出普通 .cpp,不涉及运行时编译/JIT。
+- 不直接解析真实 C `.h` 提取布局(用手写镜像描述文件 + 编译期 `&T::field` 校验兜底,免 C 解析依赖)。
 - Step 表示方式(A/B 双轨)不在纸面锁死,待基准决断。
 
 ## 11. 待决断项(交由实现阶段 + 基准测试)
@@ -469,3 +562,4 @@ render("alarm_line", &event, deviceCtx)
 2. **`Step` 绑定布局**:`union` vs `std::variant` —— 实现时择一。
 3. **`render` 防御策略**:配方名不存在 / 空指针导航时返回空串还是错误标识 —— 实现时定。
 4. **JSON 库选型**:cJSON vs nlohmann::json —— 实现时按部署环境择一。
+5. **codegen 指针/内嵌自动判定**:结构体块成员是 `T*`(指针)还是 `T`(内嵌)的判定来源 —— 从描述文件显式标注,还是 codegen 读 `.h` 推断(若读 .h 则引入轻量 C 解析,违背 6.1"不解析 .h"原则;倾向描述文件显式标注 `ptr: true/false`)。
