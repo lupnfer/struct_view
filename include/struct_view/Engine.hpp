@@ -14,6 +14,7 @@ class Engine {
     NameRegistry& names_;
     ConnectorLib& connectors_;
     RecipeStore<RecipeB> store_;
+    RecipeStore<RecipeA> storeA_;
 public:
     Engine(NameRegistry& names, ConnectorLib& connectors);
 
@@ -25,6 +26,14 @@ public:
     std::string render(const std::string& recipeName,
                        const void* structPtr,
                        const DeviceCtx& ctx) const;
+
+    // Route A (explicit four-kind Step) — alternative representation for
+    // benchmarking (spec §3.2 dual-track). Shares parse+validate with Route B;
+    // differs only in Builder (BuilderA) and store (storeA_).
+    LoadResult loadConfigA(std::string_view jsonText);
+    std::string renderA(const std::string& recipeName,
+                        const void* structPtr,
+                        const DeviceCtx& ctx) const;
 };
 
 } // namespace sv
