@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Verifies codegen output fails to compile when the C header drifts
-# (field renamed) — proving the spec's compile-time drift safety.
+# (field renamed OR array length shrunk) — proving compile-time drift safety.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -24,23 +24,45 @@ else
   exit 1
 fi
 
-echo "=== Step B: rename field -> compile MUST fail ==="
+echo "=== Step B: shrink array length [8]->[4] -> compile MUST fail (static_assert) ==="
 cat > tests/drift_header.h <<'EOF'
 #pragma once
 #include <stdint.h>
-typedef struct { uint64_t renamed; } DriftEvent;
+typedef struct {
+    uint64_t timestamp;
+    int feature_ids[4];
+} DriftEvent;
 EOF
 if g++ -std=c++17 -Iinclude -Ithird_party tests/drift_main.cpp src/*.cpp -o /tmp/drift_bad 2>/dev/null; then
-  echo "ERROR: rename should have failed the build (drift not caught)"
+  echo "ERROR: shrink [8]->[4] should have failed the build (static_assert missed)"
   exit 1
 else
-  echo "drift caught at compile (expected)"
+  echo "array length drift caught at compile (expected)"
 fi
 
-# Restore the baseline header so the repo is left clean.
+echo "=== Step C: rename field -> compile MUST fail ==="
 cat > tests/drift_header.h <<'EOF'
 #pragma once
 #include <stdint.h>
-typedef struct { uint64_t timestamp; } DriftEvent;
+typedef struct {
+    uint64_t renamed;
+    int feature_ids[8];
+} DriftEvent;
+EOF
+if g++ -std=c++17 -Iinclude -Ithird_party tests/drift_main.cpp src/*.cpp -o /tmp/drift_bad2 2>/dev/null; then
+  echo "ERROR: rename should have failed the build"
+  exit 1
+else
+  echo "field rename drift caught at compile (expected)"
+fi
+
+# Restore baseline header so the repo is left clean.
+cat > tests/drift_header.h <<'EOF'
+#pragma once
+#include <stdint.h>
+typedef struct {
+    uint64_t timestamp;
+    int feature_ids[8];
+} DriftEvent;
 EOF
 echo "ALL OK"
