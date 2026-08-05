@@ -2,8 +2,10 @@
 #include <struct_view/NameRegistry.hpp>
 #include <struct_view/ValueProvider.hpp>
 #include <struct_view/DeviceCtx.hpp>
+#include <cstddef>
 #include <cstdio>
 #include <string>
+#include <type_traits>
 
 void registerStructViewNames(sv::NameRegistry& reg) {
     reg.registerProvider("time", sv::makeProvider(
@@ -22,7 +24,28 @@ void registerStructViewNames(sv::NameRegistry& reg) {
         [](const void* p) -> const void* {
             const Event* s = static_cast<const Event*>(p);
             return static_cast<const void*>(&s->rect);
-        }), "rect");
+        }), "box");
+    reg.registerProvider("feat_ids", sv::makeProvider(
+        [](const void* p, const sv::DeviceCtx&) -> std::string {
+            const Event* s = static_cast<const Event*>(p);
+            static_assert(std::extent_v<decltype(s->feature_ids)> >= 8,
+                          "struct_view: feature_ids length drift (schema count=8)");
+            std::string out;
+            char buf[256];
+            for (std::size_t i = 0; i < 8; ++i) {
+                if (i) out += "-";
+                std::snprintf(buf, sizeof(buf), "%d", (int)s->feature_ids[i]);
+                out += buf;
+            }
+            return out;
+        }));
+    reg.registerStructArray("boxes", sv::IndexedNavigator(
+        [](const void* p, std::size_t i) -> const void* {
+            const Event* s = static_cast<const Event*>(p);
+            static_assert(std::extent_v<decltype(s->boxes)> >= 4,
+                          "struct_view: boxes length drift (schema count=4)");
+            return &s->boxes[i];
+        }), "box", 4, "|");
     reg.registerProvider("name", sv::makeProvider(
         [](const void* p, const sv::DeviceCtx&) -> std::string {
             const PersonInfo* s = static_cast<const PersonInfo*>(p);
@@ -64,6 +87,20 @@ void registerStructViewNames(sv::NameRegistry& reg) {
             char buf[256];
             std::snprintf(buf, sizeof(buf), "%d", (int)s->h);
             return std::string(buf);
+        }));
+    reg.registerProvider("tags", sv::makeProvider(
+        [](const void* p, const sv::DeviceCtx&) -> std::string {
+            const Box* s = static_cast<const Box*>(p);
+            static_assert(std::extent_v<decltype(s->tags)> >= 2,
+                          "struct_view: tags length drift (schema count=2)");
+            std::string out;
+            char buf[256];
+            for (std::size_t i = 0; i < 2; ++i) {
+                if (i) out += "-";
+                std::snprintf(buf, sizeof(buf), "%d", (int)s->tags[i]);
+                out += buf;
+            }
+            return out;
         }));
     reg.registerProvider("camera", sv::makeProvider(
         [](const void*, const sv::DeviceCtx& base) -> std::string {
