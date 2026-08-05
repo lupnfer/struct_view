@@ -54,6 +54,13 @@ public:
     // For Validator (existence/cycle) and Builder (instantiate per-recipe
     // ArrayStructBlockProviders).
     const std::vector<std::pair<std::string, StructArrayDecl>>& structArrayDecls() const;
+
+    // --- Lookups (single source of truth; used by Validator + Builder/BuilderA
+    //     to avoid duplicating these helpers across 3 files). ---
+    bool isStructBlock(const std::string& name) const;   // is `name` a declared struct block?
+    bool isStructArray(const std::string& name) const;   // is `name` a declared struct array?
+    const StructBlockDecl* findStructBlockDecl(const std::string& name) const;  // nullptr if absent
+    const StructArrayDecl* findStructArrayDecl(const std::string& name) const;  // nullptr if absent
 };
 
 } // namespace sv

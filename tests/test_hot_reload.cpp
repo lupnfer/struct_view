@@ -64,3 +64,47 @@ TEST_CASE("Hot-reload: concurrent render while republishing never crashes") {
     // recipe "r" = ${time}|${boxes} -> "99" + "|" + "1|2|3|4" = "99|1|2|3|4"
     CHECK(engine.render("r", &e, ctx) == "99|1|2|3|4");
 }
+
+TEST_CASE("Hot-reload (Route A): concurrent renderA while republishing never crashes") {
+    // M-4: Route A's storeA_ + ArrayStructBlockProviderA under concurrent renderA + reload.
+    // Same RCU structure as Route B (RecipeStore<RecipeA> publishAll/snapshot, recipe-private
+    // providers in RecipeA::ownedProviders). TSan must report 0 races.
+    sv::NameRegistry reg;
+    reg.registerProvider("time", sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
+        const HrEv* e = static_cast<const HrEv*>(p);
+        char b[32]; std::snprintf(b, sizeof(b), "%llu", (unsigned long long)e->timestamp); return b;
+    }));
+    reg.registerStructArray("boxes",
+        sv::IndexedNavigator([](const void* p, std::size_t i) -> const void* {
+            const HrEv* e = static_cast<const HrEv*>(p); return &e->boxes[i];
+        }), "box", 4, "|");
+    reg.registerProvider("v", sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
+        const HrBox* b = static_cast<const HrBox*>(p); char buf[16]; std::snprintf(buf,sizeof(buf),"%d",b->v); return buf;
+    }));
+    sv::ConnectorLib lib;
+    sv::Engine engine(reg, lib);
+    REQUIRE(engine.loadConfigA(cfg("|")).ok);
+
+    HrEv e{99, {{1},{2},{3},{4}} };
+    MyDeviceCtx ctx;
+    std::atomic<bool> stop{false};
+    std::atomic<long> renders{0};
+
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 4; ++t) {
+        threads.emplace_back([&]{
+            while (!stop.load(std::memory_order_relaxed)) {
+                (void)engine.renderA("r", &e, ctx);
+                renders.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+    for (int i = 0; i < 200; ++i) {
+        engine.loadConfigA(cfg(i % 2 ? "|" : "-"));
+    }
+    stop.store(true, std::memory_order_relaxed);
+    for (auto& t : threads) t.join();
+    CHECK(renders.load() > 0);
+    // Parity with Route B: same recipe, same data -> same final output.
+    CHECK(engine.renderA("r", &e, ctx) == "99|1|2|3|4");
+}

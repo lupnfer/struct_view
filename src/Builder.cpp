@@ -5,25 +5,6 @@
 
 namespace sv {
 
-namespace {
-bool isStructBlock(const NameRegistry& names, const std::string& s) {
-    for (const auto& d : names.structDecls()) if (d.first == s) return true;
-    return false;
-}
-const StructBlockDecl* findDecl(const NameRegistry& names, const std::string& s) {
-    for (const auto& d : names.structDecls()) if (d.first == s) return &d.second;
-    return nullptr;
-}
-bool isStructArray(const NameRegistry& names, const std::string& s) {
-    for (const auto& d : names.structArrayDecls()) if (d.first == s) return true;
-    return false;
-}
-const StructArrayDecl* findArrayDecl(const NameRegistry& names, const std::string& s) {
-    for (const auto& d : names.structArrayDecls()) if (d.first == s) return &d.second;
-    return nullptr;
-}
-} // namespace
-
 Builder::Result Builder::compile(const ConfigAst& ast,
                                  const NameRegistry& names,
                                  const ConnectorLib& connectors) {
@@ -49,11 +30,11 @@ Builder::Result Builder::compile(const ConfigAst& ast,
             if (seg.isRef) {
                 if (const ValueProvider* vp = names.lookup(seg.text)) {
                     step.provider = vp;                      // field/device (NameRegistry-owned)
-                } else if (isStructBlock(names, seg.text)) {
+                } else if (names.isStructBlock(seg.text)) {
                     // Recipe-private StructBlockProvider created in Pass 2.
                     pending.push_back({rb, rb->steps.size(), seg.text});
                     // step.provider left nullptr; fixed in Pass 2.
-                } else if (isStructArray(names, seg.text)) {
+                } else if (names.isStructArray(seg.text)) {
                     // Recipe-private ArrayStructBlockProvider created in Pass 2.
                     pendingArray.push_back({rb, rb->steps.size(), seg.text});
                     // step.provider left nullptr; fixed in Pass 2.
@@ -84,7 +65,7 @@ Builder::Result Builder::compile(const ConfigAst& ast,
     // mutable sub_ re-binding (spec §3.4a Rule 1). The shared_ptr keeps the
     // sub-recipe graph alive for any reader snapshotting the parent (Rule 3).
     for (auto& p : pending) {
-        const StructBlockDecl* decl = findDecl(names, p.blockName);
+        const StructBlockDecl* decl = names.findStructBlockDecl(p.blockName);
         if (!decl) {  // Validator should have caught this; defensive.
             r.errors.push_back({p.rb->name, "unknown struct block: " + p.blockName, 0});
             continue;
@@ -104,7 +85,7 @@ Builder::Result Builder::compile(const ConfigAst& ast,
     // Pass 2b: instantiate recipe-private ArrayStructBlockProviders (struct arrays).
     // Same RCU pattern as Pass 2 — recipe-private, shared_ptr to sub-recipe (§3.4a Rule 1/3).
     for (auto& pa : pendingArray) {
-        const StructArrayDecl* decl = findArrayDecl(names, pa.blockName);
+        const StructArrayDecl* decl = names.findStructArrayDecl(pa.blockName);
         if (!decl) {  // Validator should have caught this; defensive.
             r.errors.push_back({pa.rb->name, "unknown struct array: " + pa.blockName, 0});
             continue;

@@ -12,6 +12,8 @@ std::string StructBlockProvider::get(const void* structPtr, const DeviceCtx& ctx
 }
 
 std::string ArrayStructBlockProvider::get(const void* structPtr, const DeviceCtx& ctx) const {
+    // sub_ is bound at construction (recipe-private); if null (defensive), emit nothing.
+    if (!sub_) return {};
     std::string out;
     for (std::size_t i = 0; i < count_; ++i) {
         if (i) out += sep_;                         // join semantics (skip before first)
@@ -22,6 +24,8 @@ std::string ArrayStructBlockProvider::get(const void* structPtr, const DeviceCtx
 }
 
 std::string ArrayStructBlockProviderA::get(const void* structPtr, const DeviceCtx& ctx) const {
+    // sub_ is bound at construction (recipe-private); if null (defensive), emit nothing.
+    if (!sub_) return {};
     std::string out;
     for (std::size_t i = 0; i < count_; ++i) {
         if (i) out += sep_;                         // join semantics (skip before first)
