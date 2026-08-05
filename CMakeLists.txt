@@ -52,3 +52,10 @@ add_executable(security_example
 target_include_directories(security_example PRIVATE examples/security include third_party)
 target_compile_options(security_example PRIVATE -Wall -Wextra)
 add_dependencies(security_example security_codegen)
+
+# --- Route A vs Route B benchmark (not a test; run manually) ---
+add_executable(bench_routes
+    bench/bench_routes.cpp
+    ${SV_SRCS})
+target_include_directories(bench_routes PRIVATE examples/security include third_party)
+target_compile_options(bench_routes PRIVATE -O2)
