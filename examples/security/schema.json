@@ -1,0 +1,21 @@
+{
+  "deviceCtxType": "MyDeviceCtx",
+  "structs": [
+    {"name": "Event", "members": [
+        {"field": "timestamp", "as": "time", "type": "uint64", "fmt": "%llu"},
+        {"block": "person", "ptr": true,  "subRecipe": "person"},
+        {"block": "rect",   "ptr": false, "subRecipe": "rect"}
+    ]},
+    {"name": "PersonInfo", "members": [
+        {"field": "name", "as": "name", "type": "cstr", "fmt": "%s"},
+        {"field": "age",  "as": "age",  "type": "int",   "fmt": "%d"}
+    ]},
+    {"name": "Box", "members": [
+        {"field": "x", "type": "int", "fmt": "%d"},
+        {"field": "y", "type": "int", "fmt": "%d"},
+        {"field": "w", "type": "int", "fmt": "%d"},
+        {"field": "h", "type": "int", "fmt": "%d"}
+    ]}
+  ],
+  "device": [{"getter": "cameraId", "as": "camera"}]
+}

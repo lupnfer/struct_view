@@ -23,6 +23,32 @@ foreach(t ${SV_TESTS})
     get_filename_component(name ${t} NAME_WE)
     add_executable(${name} ${t} ${SV_SRCS} tests/main.cpp)
     target_link_libraries(${name} PRIVATE struct_view)
+    target_include_directories(${name} PRIVATE examples/security)
     target_compile_options(${name} PRIVATE -Wall -Wextra)
     add_test(NAME ${name} COMMAND ${name})
 endforeach()
+
+# --- End-to-end security example ---
+find_package(Python3 REQUIRED)
+add_custom_command(
+    OUTPUT ${CMAKE_SOURCE_DIR}/examples/security/registry_gen.cpp
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gen_registry.py
+            ${CMAKE_SOURCE_DIR}/examples/security/schema.json
+            ${CMAKE_SOURCE_DIR}/examples/security/registry_gen.cpp
+    DEPENDS ${CMAKE_SOURCE_DIR}/tools/gen_registry.py
+            ${CMAKE_SOURCE_DIR}/examples/security/schema.json
+    COMMENT "codegen: generating registry_gen.cpp from schema.json")
+# registry_gen.cpp is #included textually into main.cpp (matching the drift-test
+# pattern), NOT compiled as a separate TU — the generated file references Event/
+# PersonInfo/Box/MyDeviceCtx which are only in scope via event.h/device_ctx.h
+# included ahead of it in main.cpp. The custom target drives regeneration when
+# schema.json changes; the committed registry_gen.cpp is the source of truth for
+# a clean checkout.
+add_custom_target(security_codegen
+    DEPENDS ${CMAKE_SOURCE_DIR}/examples/security/registry_gen.cpp)
+add_executable(security_example
+    examples/security/main.cpp
+    ${SV_SRCS})
+target_include_directories(security_example PRIVATE examples/security include third_party)
+target_compile_options(security_example PRIVATE -Wall -Wextra)
+add_dependencies(security_example security_codegen)
