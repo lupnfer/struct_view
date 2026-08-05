@@ -7,25 +7,6 @@
 
 namespace sv {
 
-namespace {
-bool isStructBlock(const NameRegistry& names, const std::string& s) {
-    for (const auto& d : names.structDecls()) if (d.first == s) return true;
-    return false;
-}
-const StructBlockDecl* findDecl(const NameRegistry& names, const std::string& s) {
-    for (const auto& d : names.structDecls()) if (d.first == s) return &d.second;
-    return nullptr;
-}
-bool isStructArray(const NameRegistry& names, const std::string& s) {
-    for (const auto& d : names.structArrayDecls()) if (d.first == s) return true;
-    return false;
-}
-const StructArrayDecl* findArrayDecl(const NameRegistry& names, const std::string& s) {
-    for (const auto& d : names.structArrayDecls()) if (d.first == s) return &d.second;
-    return nullptr;
-}
-} // namespace
-
 BuilderA::Result BuilderA::compile(const ConfigAst& ast,
                                    const NameRegistry& names,
                                    const ConnectorLib& connectors) {
@@ -59,12 +40,12 @@ BuilderA::Result BuilderA::compile(const ConfigAst& ast,
                     // main Route A win anyway).
                     step.kind = StepKind::Field;
                     step.binding = FieldBinding{vp};
-                } else if (isStructBlock(names, seg.text)) {
+                } else if (names.isStructBlock(seg.text)) {
                     pending.push_back({ra, ra->steps.size(), seg.text});
                     // placeholder; replaced in Pass 2. Use FieldBinding{nullptr}.
                     step.kind = StepKind::Field;
                     step.binding = FieldBinding{nullptr};
-                } else if (isStructArray(names, seg.text)) {
+                } else if (names.isStructArray(seg.text)) {
                     pendingArray.push_back({ra, ra->steps.size(), seg.text});
                     // placeholder; replaced in Pass 2b. Use FieldBinding{nullptr}.
                     step.kind = StepKind::Field;
@@ -97,7 +78,7 @@ BuilderA::Result BuilderA::compile(const ConfigAst& ast,
     // No separate provider object: the binding is held by value in the StepA
     // variant, inlining nav + sub-recipe ptr (no virtual StructBlockProvider).
     for (auto& p : pending) {
-        const StructBlockDecl* decl = findDecl(names, p.blockName);
+        const StructBlockDecl* decl = names.findStructBlockDecl(p.blockName);
         if (!decl) {  // Validator should have caught this; defensive.
             r.errors.push_back({p.ra->name, "unknown struct block: " + p.blockName, 0});
             continue;
@@ -123,7 +104,7 @@ BuilderA::Result BuilderA::compile(const ConfigAst& ast,
     // RecipeB/runRecipeB and cannot host RecipeA sub-recipes — hence the Route A
     // variant class (option A fix for the spec §5 RecipeB/RecipeA mismatch).
     for (auto& pa : pendingArray) {
-        const StructArrayDecl* decl = findArrayDecl(names, pa.blockName);
+        const StructArrayDecl* decl = names.findStructArrayDecl(pa.blockName);
         if (!decl) {  // Validator should have caught this; defensive.
             r.errors.push_back({pa.ra->name, "unknown struct array: " + pa.blockName, 0});
             continue;

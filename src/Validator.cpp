@@ -11,16 +11,6 @@ static std::unordered_map<std::string, const RecipeAst*> indexRecipes(const Conf
     return m;
 }
 
-static bool isStructBlock(const NameRegistry& names, const std::string& s) {
-    for (const auto& d : names.structDecls()) if (d.first == s) return true;
-    return false;
-}
-
-static bool isStructArray(const NameRegistry& names, const std::string& s) {
-    for (const auto& d : names.structArrayDecls()) if (d.first == s) return true;
-    return false;
-}
-
 // Walk the (struct-block ∪ struct-array) -> subRecipe -> referenced-node graph; detect cycles.
 // Edge: node X depends on node Y if recipe(X.subRecipe) references Y (Y being a struct block or struct array).
 static bool hasCycle(const NameRegistry& names,
@@ -28,12 +18,12 @@ static bool hasCycle(const NameRegistry& names,
     std::unordered_set<std::string> visiting, visited;
     // Look up a node's subRecipe name (searches both struct blocks and struct arrays).
     auto subRecipeOf = [&](const std::string& nm) -> std::string {
-        for (auto& d : names.structDecls())      if (d.first == nm) return d.second.subRecipeName;
-        for (auto& d : names.structArrayDecls()) if (d.first == nm) return d.second.subRecipeName;
+        if (const auto* d = names.findStructBlockDecl(nm))      return d->subRecipeName;
+        if (const auto* d = names.findStructArrayDecl(nm))      return d->subRecipeName;
         return "";
     };
     auto isDepNode = [&](const std::string& nm) -> bool {
-        return isStructBlock(names, nm) || isStructArray(names, nm);
+        return names.isStructBlock(nm) || names.isStructArray(nm);
     };
     std::function<bool(const std::string&)> dfs = [&](const std::string& nm) -> bool {
         if (visiting.count(nm)) return true;
@@ -71,7 +61,7 @@ std::vector<ConfigError> Validator::validate(const ConfigAst& ast,
         for (const auto& seg : r.segments) {
             if (!seg.isRef) continue;
             if (!names.lookup(seg.text) && !connectors.get(seg.text)
-                && !isStructBlock(names, seg.text) && !isStructArray(names, seg.text)) {
+                && !names.isStructBlock(seg.text) && !names.isStructArray(seg.text)) {
                 errs.push_back({r.name, "unknown name: " + seg.text, 0});
             }
         }

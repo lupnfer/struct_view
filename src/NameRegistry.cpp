@@ -24,4 +24,18 @@ void NameRegistry::registerStructArray(std::string name, IndexedNavigator nav,
 const std::vector<std::pair<std::string, StructArrayDecl>>& NameRegistry::structArrayDecls() const {
     return structArrayDecls_;
 }
+bool NameRegistry::isStructBlock(const std::string& name) const {
+    return findStructBlockDecl(name) != nullptr;
+}
+bool NameRegistry::isStructArray(const std::string& name) const {
+    return findStructArrayDecl(name) != nullptr;
+}
+const StructBlockDecl* NameRegistry::findStructBlockDecl(const std::string& name) const {
+    for (const auto& d : structDecls_) if (d.first == name) return &d.second;
+    return nullptr;
+}
+const StructArrayDecl* NameRegistry::findStructArrayDecl(const std::string& name) const {
+    for (const auto& d : structArrayDecls_) if (d.first == name) return &d.second;
+    return nullptr;
+}
 } // namespace sv
