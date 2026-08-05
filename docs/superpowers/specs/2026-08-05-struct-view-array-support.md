@@ -243,7 +243,7 @@ Route A 的 `FieldBinding` 持 `const ValueProvider*` —— 标量数组是 `La
 | codegen | `tests/test_codegen.py` 加 2 case | 标量数组生成循环 `for` + `static_assert(std::extent_v...)`;结构体数组生成 `registerStructArray` + `&s->arr[i]` + `static_assert` |
 | codegen | `tests/test_drift.sh` 加数组长度漂移 case | 上游 `ids[8]`→`ids[4]` → 生成代码 `static_assert` 失败 → 编译失败(证明 `std::extent_v` 防护生效) |
 | NameRegistry | `tests/test_name_registry.cpp` 加 case | `registerStructArray` 存 decl;`structArrayDecls()` 取回(nav/subRecipe/count/sep 正确) |
-| Builder | `tests/test_builder.cpp` 加 2 case | 标量数组编译成 `LambdaProvider`(循环输出 `11-22-33-0-0-0-0-0`);结构体数组绑定子配方(`[box1|box2|box3|box4]`) |
+| Builder | `tests/test_builder.cpp` 加 3 case | 标量数组编译成 `LambdaProvider`(循环输出 `11-22-33-0-0-0-0-0`);结构体数组绑定子配方(`[box1|box2|box3|box4]`);**结构体数组里字段含数组**(§9a 组合形态:`100,200,300,400(7-8)|...`) |
 | Engine | `tests/test_engine.cpp` 加 case | `loadConfig` + `render` 含两种数组的配方,端到端输出正确 |
 | 并发 | `tests/test_hot_reload.cpp` 扩展配方 | 含结构体数组的配方,4 线程 render + 200 次重载,TSan 0 race |
 | Route A 对等 | `tests/test_route_a.cpp` 扩展 | Route A `renderA` 与 Route B `render` 在含数组配方上输出一致 |
@@ -254,20 +254,24 @@ Route A 的 `FieldBinding` 持 `const ValueProvider*` —— 标量数组是 `La
 
 ```c
 // examples/security/event.h(扩展)
-typedef struct { int x, y, w, h; } Box;
+typedef struct {
+    int x, y, w, h;
+    int tags[2];               // Box 里的标量数组(新,§9a 组合形态)
+} Box;
 typedef struct {
     uint64_t timestamp;
     PersonInfo* person;        // 单结构体块(已有)
-    Box rect;                  // 单结构体块(已有)
+    Box rect;                  // 单结构体块(已有,rect.tags 也走数组)
     int feature_ids[8];        // 标量数组(新)
-    Box boxes[4];              // 结构体数组(新)
+    Box boxes[4];              // 结构体数组(新,每个 box 含 tags 数组 → 嵌套组合)
 } Event;
 ```
 
-`schema.json` + `recipes.json` + `registry_gen.cpp`(重生成)+ `main.cpp` + `test_example_e2e.cpp` 同步扩展,最终输出含数组:
+`schema.json` + `recipes.json` + `registry_gen.cpp`(重生成)+ `main.cpp` + `test_example_e2e.cpp` 同步扩展,最终输出含数组(含结构体数组里字段含数组的嵌套组合):
 ```
-CAM001:1717171717|Alice-30@100,200,300,400|11-22-33-0-0-0-0-0|100,200,300,400|110,210,310,410|0,0,0,0|0,0,0,0
+CAM001:1717171717|Alice-30@100,200,300,400(7-8)|11-22-33-0-0-0-0-0|100,200,300,400(1-2)|110,210,310,410(3-4)|0,0,0,0(0-0)|0,0,0,0(0-0)
 ```
+其中 `${rect}` 的 `box` 子配方含 `${tags}` → `100,200,300,400(7-8)`(单结构体块里字段含数组);`${boxes}` 每个 box 同理 → 4 个 `x,y,w,h(tags)` 用 `|` 连接(结构体数组里字段含数组,§9a 组合形态)。
 
 `test_example_e2e.cpp` 断言这个精确串。这是整个扩展的集成验证门。
 
@@ -332,7 +336,49 @@ ${boxes}      → ArrayStructBlockProvider: for i in 0..4: nav(&ev,i)=&ev->boxes
 - **不做动态长度**(`countField` 兄弟字段引用)—— v2。
 - **不做 `${i}` 下标暴露**(需局部变量绑定机制)—— v2。
 - **不为 Route A 专造数组 binding** —— Route A 复用 `ArrayStructBlockProvider`(§5)。
-- **不做数组元素的嵌套数组**(数组里嵌数组)—— 安防场景无此需求。
+- **不做二维数组**(`T arr[N][M]`,如 `int matrix[3][4]`)—— 安防场景确认无此需求。
+
+## 9a. 天然支持:结构体数组里的字段含数组
+
+> 说明:本节澄清一种**无需额外设计、方案 1 自然支持**的组合形态,避免被误归入「不做」。
+
+安防场景存在「结构体数组的元素自身又含数组字段」的需求:
+
+```c
+typedef struct {
+    int x, y, w, h;
+    int tags[2];        // Box 里有标量数组
+} Box;
+typedef struct {
+    Box boxes[4];       // 结构体数组,每个元素含数组
+} Event;
+```
+
+期望展开:`100,200,300,400(7-8)|110,210,310,410(9-10)|...`(每个 box 的 `tags` 用 `-` 连,box 之间用 `|` 连)。
+
+**这已经是方案 1 的自然组合,零额外设计**:
+- 外层 `boxes[4]` → `ArrayStructBlockProvider`,每个元素跑 `box` 子配方。
+- `box` 子配方里写 `${tags}` → codegen 为 `Box` 的 `tags` 字段生成标量数组 `LambdaProvider`(§3.1)。
+- 子配方跑 `box` 时,`structPtr` 是 `&s->boxes[i]`(当前那个 Box),`${tags}` provider 在这个指针上取 `tags` 数组循环。
+
+递归天然成立 —— `ValueProvider::get(const void*, ctx)` 的 `structPtr` 就是「当前层要处理的结构体指针」,外层数组把元素地址传给子配方,子配方里的数组 provider 在该地址上继续循环。**接口不变,零额外类。**
+
+schema 写法(外层结构体数组 + Box 的标量数组字段):
+```json
+{ "name": "Event", "members": [
+    { "block": "boxes", "array": { "subRecipe": "box", "count": 4, "sep": "|" } }
+]},
+{ "name": "Box", "members": [
+    { "field": "x", "type": "int", "fmt": "%d" },
+    { "field": "y", "type": "int", "fmt": "%d" },
+    { "field": "w", "type": "int", "fmt": "%d" },
+    { "field": "h", "type": "int", "fmt": "%d" },
+    { "field": "tags", "type": "int", "fmt": "%d", "array": { "count": 2, "sep": "-" } }
+]}
+```
+配方:`{ "name": "box", "template": "${x},${y},${w},${h}(${tags})" }`。
+
+此形态在端到端示例(§7)与测试(§6 `test_builder`/`test_engine`)中应覆盖一例,作为组合能力的验证。
 
 ## 10. 实现改动清单(交由实现计划)
 
