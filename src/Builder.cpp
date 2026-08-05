@@ -14,6 +14,14 @@ const StructBlockDecl* findDecl(const NameRegistry& names, const std::string& s)
     for (const auto& d : names.structDecls()) if (d.first == s) return &d.second;
     return nullptr;
 }
+bool isStructArray(const NameRegistry& names, const std::string& s) {
+    for (const auto& d : names.structArrayDecls()) if (d.first == s) return true;
+    return false;
+}
+const StructArrayDecl* findArrayDecl(const NameRegistry& names, const std::string& s) {
+    for (const auto& d : names.structArrayDecls()) if (d.first == s) return &d.second;
+    return nullptr;
+}
 } // namespace
 
 Builder::Result Builder::compile(const ConfigAst& ast,
@@ -30,7 +38,8 @@ Builder::Result Builder::compile(const ConfigAst& ast,
         std::string blockName;
     };
     std::unordered_map<std::string, std::shared_ptr<RecipeB>> byName;
-    std::vector<PendingBind> pending;
+    std::vector<PendingBind> pending;       // single struct blocks
+    std::vector<PendingBind> pendingArray;  // struct arrays (spec §4.4)
 
     for (const auto& ra : ast.recipes) {
         auto rb = std::make_shared<RecipeB>();
@@ -43,6 +52,10 @@ Builder::Result Builder::compile(const ConfigAst& ast,
                 } else if (isStructBlock(names, seg.text)) {
                     // Recipe-private StructBlockProvider created in Pass 2.
                     pending.push_back({rb, rb->steps.size(), seg.text});
+                    // step.provider left nullptr; fixed in Pass 2.
+                } else if (isStructArray(names, seg.text)) {
+                    // Recipe-private ArrayStructBlockProvider created in Pass 2.
+                    pendingArray.push_back({rb, rb->steps.size(), seg.text});
                     // step.provider left nullptr; fixed in Pass 2.
                 } else if (auto lit = connectors.get(seg.text)) {
                     auto cp = std::make_unique<ConnectorProvider>(*lit);
@@ -86,6 +99,25 @@ Builder::Result Builder::compile(const ConfigAst& ast,
         auto sbp = std::make_unique<StructBlockProvider>(decl->nav, it->second);
         p.rb->steps[p.stepIdx].provider = sbp.get();
         p.rb->ownedProviders.push_back(std::move(sbp));
+    }
+
+    // Pass 2b: instantiate recipe-private ArrayStructBlockProviders (struct arrays).
+    // Same RCU pattern as Pass 2 — recipe-private, shared_ptr to sub-recipe (§3.4a Rule 1/3).
+    for (auto& pa : pendingArray) {
+        const StructArrayDecl* decl = findArrayDecl(names, pa.blockName);
+        if (!decl) {  // Validator should have caught this; defensive.
+            r.errors.push_back({pa.rb->name, "unknown struct array: " + pa.blockName, 0});
+            continue;
+        }
+        auto it = byName.find(decl->subRecipeName);
+        if (it == byName.end()) {
+            r.errors.push_back({pa.rb->name, "subRecipe missing at bind: " + decl->subRecipeName, 0});
+            continue;
+        }
+        auto asbp = std::make_unique<ArrayStructBlockProvider>(
+            decl->nav, it->second, decl->count, decl->sep);
+        pa.rb->steps[pa.stepIdx].provider = asbp.get();
+        pa.rb->ownedProviders.push_back(std::move(asbp));   // recipe-private (RCU)
     }
 
     if (!r.errors.empty()) { r.ok = false; return r; }
