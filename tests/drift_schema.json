@@ -1,0 +1,6 @@
+{
+  "deviceCtxType": "sv::DeviceCtx",
+  "structs": [{"name": "DriftEvent", "members": [
+      {"field": "timestamp", "as": "time", "type": "uint64", "fmt": "%llu"}
+  ]}]
+}

@@ -1,0 +1,7 @@
+{
+  "recipes": [
+    { "name": "alarm_line", "template": "${camera}:${time}|${person}@${rect}" },
+    { "name": "person",     "template": "${name}-${age}" },
+    { "name": "rect",       "template": "${x},${y},${w},${h}" }
+  ]
+}
