@@ -8,6 +8,7 @@
 namespace sv {
 
 struct RecipeB;  // forward — defined in Recipe.hpp
+struct RecipeA;  // forward — defined in Recipe.hpp
 
 // Type-erased value source. Hot path calls get() per step.
 class ValueProvider {
@@ -84,6 +85,26 @@ class ArrayStructBlockProvider : public ValueProvider {
 public:
     ArrayStructBlockProvider(IndexedNavigator nav, std::shared_ptr<const RecipeB> sub,
                              std::size_t count, std::string sep)
+        : nav_(std::move(nav)), sub_(std::move(sub)),
+          count_(count), sep_(std::move(sep)) {}
+    std::string get(const void* structPtr, const DeviceCtx& ctx) const override;
+};
+
+// Route A variant: same shape as ArrayStructBlockProvider but holds
+// shared_ptr<const RecipeA> and runs runRecipeA (spec §5 Route A parity).
+// Route A does NOT inline the array loop — it reuses this provider via FieldBinding
+// so the hot path is a single virtual call returning the whole array string.
+// Recipe-private: owned by RecipeA::ownedProviders; the shared_ptr sub_ keeps the
+// sub-recipe graph alive for any in-flight render snapshotting the parent (RCU
+// §3.4a Rule 1/3, same pattern as StructBlockProvider).
+class ArrayStructBlockProviderA : public ValueProvider {
+    IndexedNavigator nav_;
+    std::shared_ptr<const RecipeA> sub_;
+    std::size_t count_;
+    std::string sep_;
+public:
+    ArrayStructBlockProviderA(IndexedNavigator nav, std::shared_ptr<const RecipeA> sub,
+                              std::size_t count, std::string sep)
         : nav_(std::move(nav)), sub_(std::move(sub)),
           count_(count), sep_(std::move(sep)) {}
     std::string get(const void* structPtr, const DeviceCtx& ctx) const override;
