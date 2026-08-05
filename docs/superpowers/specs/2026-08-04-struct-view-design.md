@@ -186,25 +186,46 @@ class FieldProvider : public ValueProvider {
 
 // 结构体块 —— 对应需求里的"关键结构体"
 class StructBlockProvider : public ValueProvider {
-    Navigator nav;            // 从父指针导航到子结构体指针(如 &event->person)
-    const Recipe* subRecipe;  // 这块结构体自己的组装规则
-    /* get(): nav(structPtr)→拿子指针→engine 跑 subRecipe→返回整块字符串 */
+    Navigator nav;                          // 从父指针导航到子结构体指针(如 &event->person)
+    std::shared_ptr<const Recipe> subRecipe; // 这块结构体自己的组装规则(引用计数,见下)
+    /* get(): nav(structPtr)→拿子指针→engine 跑 *subRecipe→返回整块字符串 */
 };
 ```
 
-`StructBlockProvider` 持有子 `Recipe*` —— 递归嵌套的物理基础。结构体块本质上是"内嵌的、有导航入口的子执行器"。
+`StructBlockProvider` 持有子 `shared_ptr<const Recipe>` —— 递归嵌套的物理基础,也是热加载并发安全的关键(见 §3.4a)。结构体块本质上是"内嵌的、有导航入口的子执行器"。
+
+### 3.4a 所有权与并发安全(RCU 模型)—— 必读
+
+热加载要满足:**加载时换配方,正在跑的 render 不被打断、不撕裂**。这要求每个配方版本是一张**自包含、不可变、引用计数**的图,读者靠 `shared_ptr` 快照保活旧版,直到跑完才释放。三条规定:
+
+1. **结构体块绑定配方内私有,不全局共享重绑。** NameRegistry 注册的 StructBlockProvider 只声明"导航 + 子配方名"(供校验);Builder 编译时为**每份配方**实例化**自己的** StructBlockProvider,持有 `shared_ptr<const Recipe>` 指向**自己的**子配方。重载时新配方拥有新 provider + 新子配方;旧配方被读者快照保活 → 它拥有的旧 provider + 旧子配方一起保活。**绝不重绑共享对象的 `sub_`**(否则并发 render 会读到"旧父 + 新子"的撕裂输出,且 `sub_` 读/写本身是数据竞争)。
+
+2. **Engine 持有稳定 store,按配方 publish,不整体替换 store。** `store_` 是一个长期存活的 `RecipeStore` 对象(其 `shared_mutex` + 内部表从不被销毁)。`loadConfig` 成功后对每个配方调 `store_.publish(name, recipe)`(写锁下原子换该 name 的 `shared_ptr`);**禁止** `store_ = std::move(...)` 整体替换 store(会销毁旧 store 的锁,而读者正加着读锁 → 崩溃)。
+
+3. **配方对象不可变。** `Recipe` 发布后只读;所有可变状态(子配方指针)在编译期一次性绑定,运行期只读。读者快照拿到的 `shared_ptr<const Recipe>` 保证整张图(父 + 其结构体块 + 子配方)引用计数保活,直至所有在途 render 跑完才释放。
+
+> 这三条共同构成标准 RCU:publish 只换指针不改对象,snapshot 只读不改对象,旧图靠引用计数延后释放。spec §7 的"无锁热加载"由此成立。
 
 ### 3.5 三个注册表
 
 ```cpp
-// name → ValueProvider(标量 或 结构体块),加载时校验用、编译后 ValueProvider 绑进 Step
+// 结构体块声明(注册表里存这个,供 Validator 校验 + Builder 编译用)
+struct StructBlockDecl {
+    Navigator nav;                 // 父→子结构体指针导航
+    std::string subRecipeName;     // 该块展开时跑哪个子配方(编译期由 Builder 解析为 shared_ptr)
+};
+// name → ValueProvider(标量字段) 或 结构体块声明(nav + 子配方名),加载时校验用
 // 注意:register* 调用不由人手写 —— 由构建期 codegen 从描述文件生成(见第 6.1 节)
+// 注意:结构体块在此只存"声明"(导航 + 子配方名),供 Validator 校验存在性/环路;
+//       编译期 Builder 为每份配方实例化自己的 StructBlockProvider(配方内私有,见 §3.4a)。
 class NameRegistry {
-    std::unordered_map<std::string, std::unique_ptr<ValueProvider>> entries_;
+    std::unordered_map<std::string, std::unique_ptr<ValueProvider>> entries_;       // 标量字段
+    std::vector<std::pair<std::string, StructBlockDecl>> structDecls_;              // 结构体块声明
 public:
     void registerField (std::string name, /* 字段模板参数 */);
-    void registerStruct(std::string name, Navigator nav, const Recipe* sub);
-    const ValueProvider* lookup(const std::string& name) const;  // 加载时校验用
+    void registerStruct(std::string name, Navigator nav, std::string subRecipeName); // 仅声明
+    const ValueProvider* lookup(const std::string& name) const;  // 标量字段,加载时校验用
+    const std::vector<std::pair<std::string, StructBlockDecl>>& structDecls() const; // Builder/Validator 用
 };
 
 // 连接符名 → 字面量字符串/格式化器("服务提供")
@@ -301,7 +322,7 @@ std::string Engine::render(const std::string& recipeName,
   - 结构体块 name 指向的子配方确实存在、无循环引用(检测 recipe 间依赖环)
   - 类型匹配(如时间戳字段配了对应格式器)
 - **Builder 绑定而非查找**:校验过的 AST 里每处引用,Builder 把它替换成可直接执行的绑定(`ValueProvider*` / 字面量 / `DeviceGetter` / 导航 + 子配方指针)。这一步过后,执行路径上再无任何名字字符串。
-- **发布原子**:`RecipeStore` 内部按 name 维护 `std::shared_ptr<const Recipe>`,热加载时 `store(name, newRecipe)` 原子替换。调用方拿 `shared_ptr` 快照,遍历期间旧版不被释放 —— 无锁热加载标准做法。
+- **发布原子(按配方,非整体替换)**:`RecipeStore` 是 Engine 持有的长期对象(其 `shared_mutex` 与内部表从不被销毁),内部按 name 维护 `std::shared_ptr<const Recipe>`。`loadConfig` 成功后 Builder 对每个配方调 `store.publish(name, newRecipe)`(写锁下原子换该 name 的 `shared_ptr`);**严禁** `store = std::move(...)` 整体替换 store 对象。调用方 `snapshot` 拿 `shared_ptr` 副本,遍历期间旧配方整张图不被释放 —— RCU 无锁热加载(详见 §3.4a)。
 
 ## 5. 错误处理
 
@@ -452,7 +473,7 @@ public:
 - **JSON 解析依赖**:用轻量单文件库(如 cJSON / nlohmann::json),不引入大依赖。解析只在加载时发生,热路径零解析。
 - **构建期 codegen 工具**:Python 脚本(`gen_registry.py`),构建期运行,读描述文件产出 `registry_gen.cpp`。仅构建期依赖,不进运行时。
 - **无外部运行时依赖**:热路径纯标准库 + 内存操作,适合安防嵌入式同进程场景。
-- **线程模型**:`RecipeStore` 用 `std::shared_ptr` 原子替换实现无锁热加载;`Engine::render` 只读快照,多线程可并发 render 同一/不同配方,互不阻塞。
+- **线程模型(RCU)**:每份配方是不可变、引用计数的图(父配方持有其结构体块的 `shared_ptr`,结构体块持有子配方的 `shared_ptr`)。`RecipeStore` 是 Engine 持有的长期对象,`publish` 在写锁下原子换某 name 的 `shared_ptr`;`snapshot` 在读锁下返回 `shared_ptr` 副本(读者之间不互斥)。在途 render 持旧配方快照,旧图靠引用计数保活至跑完才释放。`Engine::render` 只读快照,多线程可并发 render 同一/不同配方,与 `loadConfig` 并发亦互不阻塞、不撕裂(三条 RCU 规定见 §3.4a)。务必遵守:① 结构体块绑定配方内私有,不重绑共享对象;② store 稳定,按配方 publish,不整体替换 store;③ 配方对象发布后只读。
 
 ## 8. 测试策略
 
