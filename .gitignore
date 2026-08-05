@@ -1,0 +1,27 @@
+# Build directories (CMake)
+/build/
+/build_*/
+cmake-build-*/
+
+# Compiled objects / artifacts
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.exe
+
+# Runtime-generated test artifacts (tests/test_drift.sh creates these)
+tests/drift_gen.cpp
+tests/drift_main.cpp
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
