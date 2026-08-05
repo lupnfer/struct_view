@@ -29,8 +29,12 @@ LoadResult Engine::loadConfig(std::string_view jsonText) {
         lr.errors = std::move(built.errors);
         return lr;
     }
-    // Success: swap in the new store. (Store owns recipes via shared_ptr.)
-    store_ = std::move(built.store);
+    // Success: atomically swap the store's entire recipe map under ONE write-lock.
+    // store_ itself is never moved/replaced — its shared_mutex + internal map are
+    // stable for the Engine's lifetime. Readers holding a shared_lock on the old
+    // map keep their snapshot alive via shared_ptr refcount (RCU); they see either
+    // the old map or the new map, never a mix. spec §3.4a Rule 2 / §5 (no half-publish).
+    store_.publishAll(std::move(built.recipes));
     lr.ok = true;
     return lr;
 }

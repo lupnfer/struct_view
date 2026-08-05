@@ -26,7 +26,7 @@ TEST_CASE("Builder: compiles literals + field refs into RecipeB") {
     lib.add("lit", "lit");  // ${lit} is a connector ref (cf. Validator test's ${dash})
     auto result = sv::Builder::compile(ast, reg, lib);
     REQUIRE(result.ok);
-    auto snap = result.store.snapshot("r");
+    auto snap = result.recipes.at("r");
     REQUIRE(snap);
     Event e{1717171717, {}};
     sv::DeviceCtx dummy;
@@ -51,7 +51,7 @@ TEST_CASE("Builder: binds struct block sub-recipe pointers") {
     sv::ConnectorLib lib;
     auto result = sv::Builder::compile(ast, reg, lib);
     REQUIRE(result.ok);
-    auto snap = result.store.snapshot("main");
+    auto snap = result.recipes.at("main");
     REQUIRE(snap);
     Event e{0, {}};
     std::strncpy(e.person.name, "Alice", 32);

@@ -48,17 +48,17 @@ public:
 };
 
 // A whole key struct block: navigate to child, run sub-recipe, return its string.
-// sub_ is bound by Builder after all recipes are compiled.
+// sub_ is bound at construction with a shared_ptr to the OWNING recipe's sub-recipe
+// (recipe-private, immutable after publish — spec §3.4a Rule 1/3). Each compiled
+// recipe version owns its own StructBlockProvider instances; there is no shared,
+// re-bound provider. Lifetime: owned by RecipeB::ownedProviders; the shared_ptr sub
+// keeps the sub-recipe graph alive for any in-flight render snapshotting the parent.
 class StructBlockProvider : public ValueProvider {
     Navigator nav_;
-    std::string subName_;
-    const RecipeB* sub_ = nullptr;
+    std::shared_ptr<const RecipeB> sub_;
 public:
-    StructBlockProvider(Navigator nav, std::string subName)
-        : nav_(nav), subName_(std::move(subName)) {}
-    const Navigator& navigator() const { return nav_; }
-    const std::string& subRecipeName() const { return subName_; }
-    void bind(const RecipeB* sub) { sub_ = sub; }
+    StructBlockProvider(Navigator nav, std::shared_ptr<const RecipeB> sub)
+        : nav_(std::move(nav)), sub_(std::move(sub)) {}
     std::string get(const void* structPtr, const DeviceCtx& ctx) const override;
 };
 

@@ -4,16 +4,16 @@ void NameRegistry::registerProvider(std::string name, std::unique_ptr<ValueProvi
     entries_[std::move(name)] = std::move(vp);
 }
 void NameRegistry::registerStruct(std::string name, Navigator nav, std::string subRecipeName) {
-    auto up = std::make_unique<StructBlockProvider>(nav, subRecipeName);
-    StructBlockProvider* raw = up.get();
-    entries_[name] = std::move(up);
-    structBlocks_.emplace_back(std::move(name), raw);
+    // Store only the declaration (nav + subRecipeName). Builder instantiates a
+    // recipe-private StructBlockProvider per compiled recipe (spec §3.4a Rule 1).
+    structDecls_.emplace_back(std::move(name),
+                              StructBlockDecl{std::move(nav), std::move(subRecipeName)});
 }
 const ValueProvider* NameRegistry::lookup(const std::string& name) const {
     auto it = entries_.find(name);
     return it == entries_.end() ? nullptr : it->second.get();
 }
-const std::vector<std::pair<std::string, StructBlockProvider*>>& NameRegistry::structBlocks() const {
-    return structBlocks_;
+const std::vector<std::pair<std::string, StructBlockDecl>>& NameRegistry::structDecls() const {
+    return structDecls_;
 }
 } // namespace sv

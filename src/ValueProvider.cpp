@@ -5,7 +5,7 @@
 namespace sv {
 
 std::string StructBlockProvider::get(const void* structPtr, const DeviceCtx& ctx) const {
-    // sub_ must be bound by Builder; if not bound, emit nothing (defensive).
+    // sub_ is bound at construction (recipe-private); if null (defensive), emit nothing.
     if (!sub_) return {};
     const void* child = nav_.navigate(structPtr);
     return runRecipeB(*sub_, child, ctx);

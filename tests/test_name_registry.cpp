@@ -23,10 +23,10 @@ TEST_CASE("NameRegistry: registerProvider + lookup") {
 TEST_CASE("NameRegistry: registerStruct stores name + subRecipe name") {
     sv::NameRegistry reg;
     reg.registerStruct("person", sv::Navigator([](const void*) -> const void* { return nullptr; }), "person");
-    auto blocks = reg.structBlocks();
-    REQUIRE(blocks.size() == 1);
-    CHECK(blocks[0].first == "person");
-    CHECK(blocks[0].second->subRecipeName() == "person");
+    auto decls = reg.structDecls();
+    REQUIRE(decls.size() == 1);
+    CHECK(decls[0].first == "person");
+    CHECK(decls[0].second.subRecipeName == "person");
 }
 
 TEST_CASE("NameRegistry: unknown lookup returns nullptr") {
