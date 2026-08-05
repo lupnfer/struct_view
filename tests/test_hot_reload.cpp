@@ -11,25 +11,35 @@
 #include <cstdio>
 
 namespace {
-struct Event { uint64_t timestamp; };
+struct HrBox { int v; };
+struct HrEv { uint64_t timestamp; HrBox boxes[4]; };
 struct MyDeviceCtx : sv::DeviceCtx { std::string cameraId() const { return "C"; } };
 
 static std::string cfg(const std::string& sep) {
-    return std::string("{\"recipes\":[{\"name\":\"r\",\"template\":\"${time}") + sep + "${time}\"}]}";
+    // recipe "r": ${time}${sep}${boxes}; recipe "box": ${v}
+    return std::string("{\"recipes\":[{\"name\":\"r\",\"template\":\"${time}") + sep +
+           "${boxes}\"},{\"name\":\"box\",\"template\":\"${v}\"}]}";
 }
 }
 
 TEST_CASE("Hot-reload: concurrent render while republishing never crashes") {
     sv::NameRegistry reg;
     reg.registerProvider("time", sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
-        const Event* e = static_cast<const Event*>(p);
+        const HrEv* e = static_cast<const HrEv*>(p);
         char b[32]; std::snprintf(b, sizeof(b), "%llu", (unsigned long long)e->timestamp); return b;
+    }));
+    reg.registerStructArray("boxes",
+        sv::IndexedNavigator([](const void* p, std::size_t i) -> const void* {
+            const HrEv* e = static_cast<const HrEv*>(p); return &e->boxes[i];
+        }), "box", 4, "|");
+    reg.registerProvider("v", sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
+        const HrBox* b = static_cast<const HrBox*>(p); char buf[16]; std::snprintf(buf,sizeof(buf),"%d",b->v); return buf;
     }));
     sv::ConnectorLib lib;
     sv::Engine engine(reg, lib);
     REQUIRE(engine.loadConfig(cfg("|")).ok);
 
-    Event e{99};
+    HrEv e{99, {{1},{2},{3},{4}} };
     MyDeviceCtx ctx;
     std::atomic<bool> stop{false};
     std::atomic<long> renders{0};
@@ -50,7 +60,7 @@ TEST_CASE("Hot-reload: concurrent render while republishing never crashes") {
     stop.store(true, std::memory_order_relaxed);
     for (auto& t : threads) t.join();
     CHECK(renders.load() > 0);
-    // final render reflects the last loaded config; loop's last iteration
-    // i=199 is odd, so the last separator published is "|" -> "99|99".
-    CHECK(engine.render("r", &e, ctx) == "99|99");
+    // final render reflects last loaded config. Loop's last iteration i=199 (odd) -> sep="|".
+    // recipe "r" = ${time}|${boxes} -> "99" + "|" + "1|2|3|4" = "99|1|2|3|4"
+    CHECK(engine.render("r", &e, ctx) == "99|1|2|3|4");
 }
