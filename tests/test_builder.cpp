@@ -60,3 +60,90 @@ TEST_CASE("Builder: binds struct block sub-recipe pointers") {
     for (auto& s : snap->steps) out += s.provider->get(&e, dummy);
     CHECK(out == "[Alice]");
 }
+
+namespace {
+struct ArrScalarEv { int ids[8]; };
+struct ArrBox { int x, y; };
+struct ArrStructEv { ArrBox boxes[4]; };
+struct ArrNestedBox { int x, y; int tags[2]; };
+struct ArrNestedEv { ArrNestedBox boxes[4]; };
+}
+
+TEST_CASE("Builder: scalar array compiles to looping provider") {
+    auto ast = sv::ConfigLoader::parse(R"({"recipes":[
+        {"name":"r","template":"${ids}"}]})").ast;
+    sv::NameRegistry reg;
+    reg.registerProvider("ids", sv::makeProvider(
+        [](const void* p, const sv::DeviceCtx&) -> std::string {
+            const ArrScalarEv* s = static_cast<const ArrScalarEv*>(p);
+            std::string out; char b[16];
+            for (std::size_t i = 0; i < 8; ++i) { if (i) out += "-"; std::snprintf(b,sizeof(b),"%d",s->ids[i]); out += b; }
+            return out;
+        }));
+    sv::ConnectorLib lib;
+    auto result = sv::Builder::compile(ast, reg, lib);
+    REQUIRE(result.ok);
+    auto snap = result.recipes.at("r");
+    ArrScalarEv e{{11,22,33,0,0,0,0,0}};
+    sv::DeviceCtx dummy;
+    std::string out;
+    for (auto& s : snap->steps) out += s.provider->get(&e, dummy);
+    CHECK(out == "11-22-33-0-0-0-0-0");
+}
+
+TEST_CASE("Builder: struct array binds sub-recipe per element") {
+    auto ast = sv::ConfigLoader::parse(R"({"recipes":[
+        {"name":"main","template":"[${boxes}]"},
+        {"name":"box","template":"${x}${comma}${y}"}]})").ast;
+    sv::NameRegistry reg;
+    reg.registerStructArray("boxes",
+        sv::IndexedNavigator([](const void* p, std::size_t i) -> const void* {
+            const ArrStructEv* s = static_cast<const ArrStructEv*>(p); return &s->boxes[i];
+        }), "box", 4, "|");
+    reg.registerProvider("x", sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
+        const ArrBox* b = static_cast<const ArrBox*>(p); char buf[16]; std::snprintf(buf,sizeof(buf),"%d",b->x); return buf;
+    }));
+    reg.registerProvider("y", sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
+        const ArrBox* b = static_cast<const ArrBox*>(p); char buf[16]; std::snprintf(buf,sizeof(buf),"%d",b->y); return buf;
+    }));
+    sv::ConnectorLib lib;
+    lib.add("comma", ",");
+    auto result = sv::Builder::compile(ast, reg, lib);
+    REQUIRE(result.ok);
+    auto snap = result.recipes.at("main");
+    ArrStructEv e{ {{1,2},{3,4},{5,6},{7,8}} };
+    sv::DeviceCtx dummy;
+    std::string out;
+    for (auto& s : snap->steps) out += s.provider->get(&e, dummy);
+    CHECK(out == "[1,2|3,4|5,6|7,8]");
+}
+
+TEST_CASE("Builder: struct array with array field in element (nested combo, §9a)") {
+    auto ast = sv::ConfigLoader::parse(R"js({"recipes":[
+        {"name":"main","template":"${boxes}"},
+        {"name":"box","template":"${x}(${tags})"}]})js").ast;
+    sv::NameRegistry reg;
+    reg.registerStructArray("boxes",
+        sv::IndexedNavigator([](const void* p, std::size_t i) -> const void* {
+            const ArrNestedEv* s = static_cast<const ArrNestedEv*>(p); return &s->boxes[i];
+        }), "box", 4, "|");
+    reg.registerProvider("x", sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
+        const ArrNestedBox* b = static_cast<const ArrNestedBox*>(p); char buf[16]; std::snprintf(buf,sizeof(buf),"%d",b->x); return buf;
+    }));
+    reg.registerProvider("tags", sv::makeProvider(
+        [](const void* p, const sv::DeviceCtx&) -> std::string {
+            const ArrNestedBox* b = static_cast<const ArrNestedBox*>(p);
+            std::string out; char buf[16];
+            for (std::size_t i = 0; i < 2; ++i) { if (i) out += "-"; std::snprintf(buf,sizeof(buf),"%d",b->tags[i]); out += buf; }
+            return out;
+        }));
+    sv::ConnectorLib lib;
+    auto result = sv::Builder::compile(ast, reg, lib);
+    REQUIRE(result.ok);
+    auto snap = result.recipes.at("main");
+    ArrNestedEv e{ {{1,2,{7,8}},{3,4,{9,10}},{5,6,{11,12}},{7,8,{13,14}}} };
+    sv::DeviceCtx dummy;
+    std::string out;
+    for (auto& s : snap->steps) out += s.provider->get(&e, dummy);
+    CHECK(out == "1(7-8)|3(9-10)|5(11-12)|7(13-14)");
+}

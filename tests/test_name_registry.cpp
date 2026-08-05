@@ -33,3 +33,24 @@ TEST_CASE("NameRegistry: unknown lookup returns nullptr") {
     sv::NameRegistry reg;
     CHECK(reg.lookup("nope") == nullptr);
 }
+
+TEST_CASE("NameRegistry: registerStructArray stores decl") {
+    sv::NameRegistry reg;
+    reg.registerStructArray("boxes",
+        sv::IndexedNavigator([](const void*, std::size_t) -> const void* { return nullptr; }),
+        "box", 4, "|");
+    auto decls = reg.structArrayDecls();
+    REQUIRE(decls.size() == 1);
+    CHECK(decls[0].first == "boxes");
+    CHECK(decls[0].second.subRecipeName == "box");
+    CHECK(decls[0].second.count == 4);
+    CHECK(decls[0].second.sep == "|");
+}
+
+TEST_CASE("NameRegistry: struct array not in lookup (only scalars/devices)") {
+    sv::NameRegistry reg;
+    reg.registerStructArray("boxes",
+        sv::IndexedNavigator([](const void*, std::size_t) -> const void* { return nullptr; }),
+        "box", 4, "|");
+    CHECK(reg.lookup("boxes") == nullptr);   // struct arrays are NOT in entries_
+}

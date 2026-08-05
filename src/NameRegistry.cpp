@@ -16,4 +16,12 @@ const ValueProvider* NameRegistry::lookup(const std::string& name) const {
 const std::vector<std::pair<std::string, StructBlockDecl>>& NameRegistry::structDecls() const {
     return structDecls_;
 }
+void NameRegistry::registerStructArray(std::string name, IndexedNavigator nav,
+                                       std::string subRecipeName, std::size_t count, std::string sep) {
+    StructArrayDecl decl{nav, subRecipeName, count, sep};
+    structArrayDecls_.emplace_back(std::move(name), std::move(decl));
+}
+const std::vector<std::pair<std::string, StructArrayDecl>>& NameRegistry::structArrayDecls() const {
+    return structArrayDecls_;
+}
 } // namespace sv

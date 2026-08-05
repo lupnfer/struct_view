@@ -4,7 +4,10 @@
     {"name": "Event", "members": [
         {"field": "timestamp", "as": "time", "type": "uint64", "fmt": "%llu"},
         {"block": "person", "ptr": true,  "subRecipe": "person"},
-        {"block": "rect",   "ptr": false, "subRecipe": "rect"}
+        {"block": "rect",   "ptr": false, "subRecipe": "box"},
+        {"field": "feature_ids", "as": "feat_ids", "type": "int", "fmt": "%d",
+         "array": {"count": 8, "sep": "-"}},
+        {"block": "boxes", "array": {"subRecipe": "box", "count": 4, "sep": "|"}}
     ]},
     {"name": "PersonInfo", "members": [
         {"field": "name", "as": "name", "type": "cstr", "fmt": "%s"},
@@ -14,7 +17,8 @@
         {"field": "x", "type": "int", "fmt": "%d"},
         {"field": "y", "type": "int", "fmt": "%d"},
         {"field": "w", "type": "int", "fmt": "%d"},
-        {"field": "h", "type": "int", "fmt": "%d"}
+        {"field": "h", "type": "int", "fmt": "%d"},
+        {"field": "tags", "type": "int", "fmt": "%d", "array": {"count": 2, "sep": "-"}}
     ]}
   ],
   "device": [{"getter": "cameraId", "as": "camera"}]

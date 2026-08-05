@@ -1,7 +1,7 @@
 {
   "recipes": [
-    { "name": "alarm_line", "template": "${camera}:${time}|${person}@${rect}" },
+    { "name": "alarm_line", "template": "${camera}:${time}|${person}@${rect}|${feat_ids}|${boxes}" },
     { "name": "person",     "template": "${name}-${age}" },
-    { "name": "rect",       "template": "${x},${y},${w},${h}" }
+    { "name": "box",        "template": "${x},${y},${w},${h}(${tags})" }
   ]
 }

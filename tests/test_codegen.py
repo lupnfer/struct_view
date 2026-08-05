@@ -54,6 +54,32 @@ def test_emits_device_getter_with_downcast():
     assert 'static_cast<const MyDeviceCtx&>(base)' in out
     assert 'ctx.cameraId()' in out
 
+ARRAY_SCHEMA = {
+    "deviceCtxType": "sv::DeviceCtx",
+    "structs": [
+        {"name": "Event", "members": [
+            {"field": "feature_ids", "as": "feat_ids", "type": "int", "fmt": "%d",
+             "array": {"count": 8, "sep": "-"}},
+            {"block": "boxes", "array": {"subRecipe": "box", "count": 4, "sep": "|"}}
+        ]}
+    ]
+}
+
+def test_emits_scalar_array_loop_and_static_assert():
+    out = run_gen(json.dumps(ARRAY_SCHEMA), tempfile.mktemp() + ".cpp")
+    assert 'registerProvider("feat_ids"' in out
+    assert 'for (std::size_t i = 0; i < 8; ++i)' in out
+    assert 'if (i) out += "-";' in out
+    assert 'std::extent_v<decltype(s->feature_ids)> >= 8' in out
+    assert '(int)s->feature_ids[i]' in out
+
+def test_emits_struct_array_register_struct_array_and_static_assert():
+    out = run_gen(json.dumps(ARRAY_SCHEMA), tempfile.mktemp() + ".cpp")
+    assert 'registerStructArray("boxes"' in out
+    assert 'std::extent_v<decltype(s->boxes)> >= 4' in out
+    assert 'return &s->boxes[i];' in out
+    assert '"box", 4, "|"' in out
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

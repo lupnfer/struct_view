@@ -49,10 +49,14 @@ struct StepA {
 struct RecipeA {
     std::string name;
     std::vector<StepA> steps;
-    // No ownedProviders needed: ConnectorBinding holds the literal by value (no heap);
-    // SubRecipeBinding holds shared_ptr to sub-recipe (co-ownership, no separate provider
-    // object). Field/Device bindings hold raw ptrs into NameRegistry-owned providers
-    // (longer-lived, read-only).
+    // Owns ArrayStructBlockProviderA instances for struct-array steps (Route A
+    // reuses the Route B provider pattern via FieldBinding, spec §5). Route A
+    // does not inline the array loop — it calls the provider's get() through a
+    // single virtual dispatch. Field/Device bindings hold raw ptrs into
+    // NameRegistry-owned providers (longer-lived, read-only); ConnectorBinding
+    // holds the literal by value (no heap); SubRecipeBinding holds shared_ptr
+    // to its sub-recipe (co-ownership, no separate provider object).
+    std::vector<std::unique_ptr<ValueProvider>> ownedProviders;
 };
 
 } // namespace sv

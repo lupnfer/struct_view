@@ -16,6 +16,14 @@ const StructBlockDecl* findDecl(const NameRegistry& names, const std::string& s)
     for (const auto& d : names.structDecls()) if (d.first == s) return &d.second;
     return nullptr;
 }
+bool isStructArray(const NameRegistry& names, const std::string& s) {
+    for (const auto& d : names.structArrayDecls()) if (d.first == s) return true;
+    return false;
+}
+const StructArrayDecl* findArrayDecl(const NameRegistry& names, const std::string& s) {
+    for (const auto& d : names.structArrayDecls()) if (d.first == s) return &d.second;
+    return nullptr;
+}
 } // namespace
 
 BuilderA::Result BuilderA::compile(const ConfigAst& ast,
@@ -31,7 +39,8 @@ BuilderA::Result BuilderA::compile(const ConfigAst& ast,
         std::string blockName;
     };
     std::unordered_map<std::string, std::shared_ptr<RecipeA>> byName;
-    std::vector<PendingBind> pending;
+    std::vector<PendingBind> pending;       // single struct blocks (SubRecipeBinding)
+    std::vector<PendingBind> pendingArray;  // struct arrays (FieldBinding, spec §5)
 
     for (const auto& raAst : ast.recipes) {
         auto ra = std::make_shared<RecipeA>();
@@ -53,6 +62,11 @@ BuilderA::Result BuilderA::compile(const ConfigAst& ast,
                 } else if (isStructBlock(names, seg.text)) {
                     pending.push_back({ra, ra->steps.size(), seg.text});
                     // placeholder; replaced in Pass 2. Use FieldBinding{nullptr}.
+                    step.kind = StepKind::Field;
+                    step.binding = FieldBinding{nullptr};
+                } else if (isStructArray(names, seg.text)) {
+                    pendingArray.push_back({ra, ra->steps.size(), seg.text});
+                    // placeholder; replaced in Pass 2b. Use FieldBinding{nullptr}.
                     step.kind = StepKind::Field;
                     step.binding = FieldBinding{nullptr};
                 } else if (auto lit = connectors.get(seg.text)) {
@@ -99,6 +113,36 @@ BuilderA::Result BuilderA::compile(const ConfigAst& ast,
         step.kind = StepKind::SubRecipe;
         step.binding = SubRecipeBinding{decl->nav, it->second};
         p.ra->steps[p.stepIdx] = std::move(step);
+    }
+
+    // Pass 2b: struct arrays — create ArrayStructBlockProviderA (Route A variant),
+    // put it in FieldBinding. Route A does NOT inline the array loop; it reuses the
+    // provider via a single virtual call (spec §5). The provider is recipe-private
+    // (ownedProviders) and holds shared_ptr<const RecipeA> to its sub-recipe (RCU
+    // §3.4a Rule 1/3). Note: ArrayStructBlockProvider (Task 1) is hardcoded to
+    // RecipeB/runRecipeB and cannot host RecipeA sub-recipes — hence the Route A
+    // variant class (option A fix for the spec §5 RecipeB/RecipeA mismatch).
+    for (auto& pa : pendingArray) {
+        const StructArrayDecl* decl = findArrayDecl(names, pa.blockName);
+        if (!decl) {  // Validator should have caught this; defensive.
+            r.errors.push_back({pa.ra->name, "unknown struct array: " + pa.blockName, 0});
+            continue;
+        }
+        auto it = byName.find(decl->subRecipeName);
+        if (it == byName.end()) {
+            r.errors.push_back({pa.ra->name, "subRecipe missing at bind: " + decl->subRecipeName, 0});
+            continue;
+        }
+        // shared_ptr<RecipeA> -> shared_ptr<const RecipeA> via ctor (refcount bump,
+        // recipe co-owns sub). ArrayStructBlockProviderA is-a ValueProvider, so it
+        // slots into FieldBinding; runRecipeA's Field case calls provider->get().
+        auto asbp = std::make_unique<ArrayStructBlockProviderA>(
+            decl->nav, it->second, decl->count, decl->sep);
+        StepA step;
+        step.kind = StepKind::Field;
+        step.binding = FieldBinding{asbp.get()};
+        pa.ra->steps[pa.stepIdx] = std::move(step);
+        pa.ra->ownedProviders.push_back(std::move(asbp));
     }
 
     if (!r.errors.empty()) { r.ok = false; return r; }
