@@ -11,4 +11,14 @@ std::string StructBlockProvider::get(const void* structPtr, const DeviceCtx& ctx
     return runRecipeB(*sub_, child, ctx);
 }
 
+std::string ArrayStructBlockProvider::get(const void* structPtr, const DeviceCtx& ctx) const {
+    std::string out;
+    for (std::size_t i = 0; i < count_; ++i) {
+        if (i) out += sep_;                         // join semantics (skip before first)
+        const void* child = nav_.navigate(structPtr, i);
+        out += runRecipeB(*sub_, child, ctx);       // run sub-recipe per element
+    }
+    return out;
+}
+
 } // namespace sv
