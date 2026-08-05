@@ -104,12 +104,54 @@ def device_line(device_ctx_type, dev):
             return ctx.{getter}();
         }}));\n'''
 
+def validate_member(struct_name, m):
+    """Validate a single member's shape; raise ValueError with a clear message
+    if malformed (so schema typos fail the build loudly, not silently)."""
+    has_field, has_block, has_array = "field" in m, "block" in m, "array" in m
+    # 1. Must have exactly one of field/block (the C member to read). 'array' alone
+    #    (no field/block) is a typo like {"bloc": ..., "array": ...} — would be
+    #    silently skipped without this check.
+    if not has_field and not has_block:
+        raise ValueError(
+            f"struct_view schema: struct '{struct_name}' has a member with neither "
+            f"'field' nor 'block' (got keys: {sorted(m.keys())}); cannot determine "
+            f"which C member to read. Did you typo 'field'/'block'?")
+    if has_field and has_block:
+        raise ValueError(
+            f"struct_view schema: struct '{struct_name}' member has both 'field' and "
+            f"'block' — a member is either a scalar field or a struct block, not both.")
+    # 2. Array members need a well-formed 'array' object.
+    if has_array:
+        arr = m["array"]
+        if not isinstance(arr, dict):
+            raise ValueError(
+                f"struct_view schema: struct '{struct_name}' member '{m.get('field') or m.get('block')}' "
+                f"has 'array' that is not an object (got {type(arr).__name__}).")
+        if "count" not in arr:
+            raise ValueError(
+                f"struct_view schema: struct '{struct_name}' member '{m.get('field') or m.get('block')}' "
+                f"is an array but 'array' is missing required key 'count'.")
+        if "sep" not in arr:
+            raise ValueError(
+                f"struct_view schema: struct '{struct_name}' member '{m.get('field') or m.get('block')}' "
+                f"is an array but 'array' is missing required key 'sep'.")
+        if has_block and "subRecipe" not in arr:
+            raise ValueError(
+                f"struct_view schema: struct '{struct_name}' struct-array '{m['block']}' "
+                f"is missing 'array.subRecipe' (which sub-recipe each element runs).")
+        if has_field and ("type" not in m or "fmt" not in m):
+            missing = "type" if "type" not in m else "fmt"
+            raise ValueError(
+                f"struct_view schema: struct '{struct_name}' scalar-array '{m['field']}' "
+                f"is missing required key '{missing}' (element type/format).")
+
 def gen(schema):
     device_ctx_type = schema.get("deviceCtxType", "sv::DeviceCtx")
     out = HEADER
     for st in schema.get("structs", []):
         sn = st["name"]
         for m in st.get("members", []):
+            validate_member(sn, m)   # fail loud on malformed members (M-5)
             if "array" in m:
                 if "field" in m:
                     out += field_array_line(sn, m)
@@ -128,8 +170,17 @@ def main():
     if len(sys.argv) != 3:
         print("usage: gen_registry.py schema.json output.cpp", file=sys.stderr)
         sys.exit(2)
-    schema = json.loads(pathlib.Path(sys.argv[1]).read_text())
-    pathlib.Path(sys.argv[2]).write_text(gen(schema))
+    try:
+        schema = json.loads(pathlib.Path(sys.argv[1]).read_text())
+    except json.JSONDecodeError as ex:
+        print(f"gen_registry.py: schema.json is not valid JSON: {ex}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        out = gen(schema)
+    except ValueError as ex:
+        print(f"gen_registry.py: {ex}", file=sys.stderr)
+        sys.exit(1)
+    pathlib.Path(sys.argv[2]).write_text(out)
 
 if __name__ == "__main__":
     main()

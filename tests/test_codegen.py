@@ -80,6 +80,44 @@ def test_emits_struct_array_register_struct_array_and_static_assert():
     assert 'return &s->boxes[i];' in out
     assert '"box", 4, "|"' in out
 
+
+def run_gen_expect_error(schema_text, needle):
+    """Run codegen expecting it to FAIL; assert it mentions `needle` in stderr."""
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        f.write(schema_text); schema_path = f.name
+    r = subprocess.run([sys.executable, str(GEN), schema_path, tempfile.mktemp() + ".cpp"],
+                       capture_output=True, text=True)
+    assert r.returncode != 0, f"expected failure but codegen succeeded:\n{r.stdout}"
+    assert needle in r.stderr, f"expected stderr to mention {needle!r}; got:\n{r.stderr}"
+
+
+def test_rejects_array_member_without_field_or_block():
+    # M-5: a member with "array" but neither "field" nor "block" is malformed
+    # (e.g. a typo'd "block" -> "bloc"). Must fail loudly, not silently skip.
+    schema = json.dumps({"deviceCtxType": "sv::DeviceCtx", "structs": [
+        {"name": "Ev", "members": [{"bloc": "x", "array": {"count": 2, "sep": "-"}}]}
+    ]})
+    run_gen_expect_error(schema, "array")
+
+
+def test_rejects_member_with_no_recognized_key():
+    # A member that is neither field, block, nor array — silent skip is wrong.
+    schema = json.dumps({"deviceCtxType": "sv::DeviceCtx", "structs": [
+        {"name": "Ev", "members": [{"unknown": "thing"}]}
+    ]})
+    run_gen_expect_error(schema, "Ev")
+
+
+def test_rejects_scalar_array_missing_count():
+    # A scalar array member whose "array" object lacks "count" — must fail
+    # with a clear message, not a cryptic KeyError.
+    schema = json.dumps({"deviceCtxType": "sv::DeviceCtx", "structs": [
+        {"name": "Ev", "members": [
+            {"field": "ids", "type": "int", "fmt": "%d", "array": {"sep": "-"}}
+        ]}
+    ]})
+    run_gen_expect_error(schema, "count")
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
