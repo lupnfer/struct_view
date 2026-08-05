@@ -12,8 +12,10 @@ HEADER = """\
 #include <struct_view/NameRegistry.hpp>
 #include <struct_view/ValueProvider.hpp>
 #include <struct_view/DeviceCtx.hpp>
+#include <cstddef>
 #include <cstdio>
 #include <string>
+#include <type_traits>
 
 void registerStructViewNames(sv::NameRegistry& reg) {
 """
@@ -53,6 +55,46 @@ def block_line(struct_name, member):
             return {deref};
         }}), "{sub}");\n'''
 
+def field_array_line(struct_name, member):
+    field = member["field"]
+    as_name = member.get("as", field)
+    typ = member["type"]
+    fmt = member["fmt"]
+    arr = member["array"]
+    count = arr["count"]
+    sep = arr["sep"]
+    cast = TYPE_CAST[typ]
+    sep_lit = sep.replace('\\', '\\\\').replace('"', '\\"')
+    return f'''    reg.registerProvider("{as_name}", sv::makeProvider(
+        [](const void* p, const sv::DeviceCtx&) -> std::string {{
+            const {struct_name}* s = static_cast<const {struct_name}*>(p);
+            static_assert(std::extent_v<decltype(s->{field})> >= {count},
+                          "struct_view: {field} length drift (schema count={count})");
+            std::string out;
+            char buf[256];
+            for (std::size_t i = 0; i < {count}; ++i) {{
+                if (i) out += "{sep_lit}";
+                std::snprintf(buf, sizeof(buf), "{fmt}", {cast}s->{field}[i]);
+                out += buf;
+            }}
+            return out;
+        }}));\n'''
+
+def block_array_line(struct_name, member):
+    block = member["block"]
+    arr = member["array"]
+    sub = arr["subRecipe"]
+    count = arr["count"]
+    sep = arr["sep"]
+    sep_lit = sep.replace('\\', '\\\\').replace('"', '\\"')
+    return f'''    reg.registerStructArray("{block}", sv::IndexedNavigator(
+        [](const void* p, std::size_t i) -> const void* {{
+            const {struct_name}* s = static_cast<const {struct_name}*>(p);
+            static_assert(std::extent_v<decltype(s->{block})> >= {count},
+                          "struct_view: {block} length drift (schema count={count})");
+            return &s->{block}[i];
+        }}), "{sub}", {count}, "{sep_lit}");\n'''
+
 def device_line(device_ctx_type, dev):
     getter = dev["getter"]
     as_name = dev.get("as", getter)
@@ -68,7 +110,12 @@ def gen(schema):
     for st in schema.get("structs", []):
         sn = st["name"]
         for m in st.get("members", []):
-            if "field" in m:
+            if "array" in m:
+                if "field" in m:
+                    out += field_array_line(sn, m)
+                elif "block" in m:
+                    out += block_array_line(sn, m)
+            elif "field" in m:
                 out += field_line(sn, m)
             elif "block" in m:
                 out += block_line(sn, m)
