@@ -19,7 +19,7 @@
 | 数组连接符 | schema 内置 `sep`(与字段类型/格式器同类知识,放描述文件最自然) |
 | 长度漂移防护 | `std::extent_v<decltype(s->arr)> >= count` + `static_assert`(C++17 原生类型 trait,比 `sizeof` 比更语义化,且能防指针误标成数组) |
 | 实现方案 | 方案 1:标量数组生成循环 `LambdaProvider`(零新增运行时类);结构体数组新增 `IndexedNavigator` + `ArrayStructBlockProvider`(与现有 `Navigator`/`StructBlockProvider` 同构) |
-| Route A 对等 | Route A 复用 `ArrayStructBlockProvider`(塞进 `FieldBinding`),**不专造 Route A 数组 binding**(YAGNI;基准已决断 Route B 为默认) |
+| Route A 对等 | Route A 新增 `ArrayStructBlockProviderA`(与 B 类同构,持 `RecipeA`+`runRecipeA`),塞进 `FieldBinding`,**不新增 binding 变体**(YAGNI;基准已决断 Route B 为默认) |
 
 ### 1.3 现状核查(当前 codegen 对数组的行为)
 
@@ -227,14 +227,16 @@ for (auto& pa : pendingArray) {
 
 ## 5. Route A 对等处理
 
-Route A(显式四类 Step)也支持数组,但**不专造 Route A 数组 binding**(YAGNI)。
+Route A(显式四类 Step)也支持数组,但**不专造 Route A 数组 binding**(YAGNI —— 不新增 `StepKind`/binding 变体,仍走 `FieldBinding`)。
 
-**做法(已定):Route A 复用 `ArrayStructBlockProvider`。**
-Route A 的 `FieldBinding` 持 `const ValueProvider*` —— 标量数组是 `LambdaProvider`、结构体数组是 `ArrayStructBlockProvider`,两者都是 `ValueProvider*`,直接塞进 `FieldBinding`。Route A 的 `runRecipeA` 对 `Field` case 调 `provider->get(structPtr, ctx)` —— 一次虚调用取整个数组字符串(数组循环在 provider 内部)。
+**做法(已定):Route A 新增 `ArrayStructBlockProviderA`,塞进 `FieldBinding`。**
+> 设计修正:原草案设想「Route A 复用 Route B 的 `ArrayStructBlockProvider`」,但该类硬编码持 `shared_ptr<const RecipeB>` + 调 `runRecipeB`,无法承载 Route A 的 `RecipeA` 子配方(类型不兼容,编译不过)。故新增 `ArrayStructBlockProviderA`(`include/struct_view/ValueProvider.hpp`),与 `ArrayStructBlockProvider` 同构,差异仅在持 `shared_ptr<const RecipeA>` + 调 `runRecipeA`。这是 spec 起草时未察觉的类型不兼容问题,实现阶段修正。仍遵守「不专造 Route A 数组 binding」—— 没有新增 `StepKind`/binding 变体,provider 仍塞进 `FieldBinding`。
 
-**代价**:Route A 对数组元素**不内联**(经 `ArrayStructBlockProvider` 虚调用 + 内部循环),失去 Route A「无虚调用」优势。但 Route A 本是基准参照(基准已决断 Route B 为默认),数组场景下 Route A 退化为与 Route B 行为一致,parity 测试仍成立。基准决断文档注明「数组场景 Route A 无内联优势」。
+标量数组是 `LambdaProvider`(与 Route B 共用,无 Route A 变体),结构体数组是 `ArrayStructBlockProviderA`,两者都是 `ValueProvider*`,直接塞进 `FieldBinding`。Route A 的 `runRecipeA` 对 `Field` case 调 `provider->get(structPtr, ctx)` —— 一次虚调用取整个数组字符串(数组循环在 provider 内部)。
 
-**BuilderA 改动**:Pass 1 识别结构体数组引用时,与 Route B 一样走 `pendingArray`,Pass 2 创建 `ArrayStructBlockProvider` 塞进 `FieldBinding`(而非 `SubRecipeBinding`)。标量数组直接 `names.lookup` 命中(它在 `entries_`)。
+**代价**:Route A 对数组元素**不内联**(经 `ArrayStructBlockProviderA` 虚调用 + 内部循环),失去 Route A「无虚调用」优势。但 Route A 本是基准参照(基准已决断 Route B 为默认),数组场景下 Route A 退化为与 Route B 行为一致,parity 测试仍成立。基准决断文档注明「数组场景 Route A 无内联优势」。
+
+**BuilderA 改动**:Pass 1 识别结构体数组引用时,与 Route B 一样走 `pendingArray`,Pass 2 创建 `ArrayStructBlockProviderA` 塞进 `FieldBinding`(而非 `SubRecipeBinding`),由 `RecipeA::ownedProviders` 拥有(配方内私有,RCU)。标量数组直接 `names.lookup` 命中(它在 `entries_`)。`RecipeA` 因此新增 `ownedProviders` 成员(`include/struct_view/Recipe.hpp`)。
 
 ## 6. 测试策略(TDD,逐层)
 
@@ -335,7 +337,7 @@ ${boxes}      → ArrayStructBlockProvider: for i in 0..4: nav(&ev,i)=&ev->boxes
 
 - **不做动态长度**(`countField` 兄弟字段引用)—— v2。
 - **不做 `${i}` 下标暴露**(需局部变量绑定机制)—— v2。
-- **不为 Route A 专造数组 binding** —— Route A 复用 `ArrayStructBlockProvider`(§5)。
+- **不为 Route A 专造数组 binding 变体** —— Route A 新增 `ArrayStructBlockProviderA` provider 类(与 B 类同构,因 RecipeB/RecipeA 类型不兼容;见 §5 设计修正),但仍塞进 `FieldBinding`,不新增 `StepKind`/binding 变体。
 - **不做二维数组**(`T arr[N][M]`,如 `int matrix[3][4]`)—— 安防场景确认无此需求。
 
 ## 9a. 天然支持:结构体数组里的字段含数组
