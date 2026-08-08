@@ -8,19 +8,19 @@ SCHEMA = {
     "deviceCtxType": "MyDeviceCtx",
     "structs": [
         {"name": "Event", "members": [
-            {"field": "timestamp", "as": "time", "type": "uint64", "fmt": "%llu"},
-            {"block": "person", "ptr": True, "subRecipe": "person"},
-            {"block": "rect", "ptr": False, "subRecipe": "rect"}
+            {"field": "timestamp", "as": "time", "desc": "时间戳", "type": "uint64", "fmt": "%llu"},
+            {"block": "person", "desc": "人体", "ptr": True, "sep": "-", "fields": ["name", "age"]},
+            {"block": "rect", "desc": "框", "ptr": False, "sep": ",", "fields": ["x"]}
         ]},
         {"name": "PersonInfo", "members": [
-            {"field": "name", "type": "cstr", "fmt": "%s"},
-            {"field": "age", "type": "int", "fmt": "%d"}
+            {"field": "name", "desc": "姓名", "type": "cstr", "fmt": "%s"},
+            {"field": "age", "desc": "年龄", "type": "int", "fmt": "%d"}
         ]},
         {"name": "Box", "members": [
-            {"field": "x", "type": "int", "fmt": "%d"}
+            {"field": "x", "desc": "X", "type": "int", "fmt": "%d"}
         ]}
     ],
-    "device": [{"getter": "cameraId", "as": "camera"}]
+    "device": [{"getter": "cameraId", "as": "camera", "desc": "摄像头"}]
 }
 
 def run_gen(schema_text, out_path):
@@ -47,6 +47,8 @@ def test_emits_struct_block_pointer_and_embedded():
     out = run_gen(json.dumps(SCHEMA), tempfile.mktemp() + ".cpp")
     assert 'return static_cast<const void*>(s->person);' in out   # ptr
     assert 'return static_cast<const void*>(&s->rect);' in out    # embedded
+    assert '{"name", "age"}' in out   # fields list
+    assert '"-"' in out               # sep
 
 def test_emits_device_getter_with_downcast():
     out = run_gen(json.dumps(SCHEMA), tempfile.mktemp() + ".cpp")
@@ -54,13 +56,20 @@ def test_emits_device_getter_with_downcast():
     assert 'static_cast<const MyDeviceCtx&>(base)' in out
     assert 'ctx.cameraId()' in out
 
+def test_emits_desc_in_register_calls():
+    out = run_gen(json.dumps(SCHEMA), tempfile.mktemp() + ".cpp")
+    assert '"时间戳"' in out    # field desc
+    assert '"人体"' in out      # block desc
+    assert '"摄像头"' in out    # device desc
+
 ARRAY_SCHEMA = {
     "deviceCtxType": "sv::DeviceCtx",
     "structs": [
         {"name": "Event", "members": [
             {"field": "feature_ids", "as": "feat_ids", "type": "int", "fmt": "%d",
              "array": {"count": 8, "sep": "-"}},
-            {"block": "boxes", "array": {"subRecipe": "box", "count": 4, "sep": "|"}}
+            {"block": "boxes", "sep": ",", "fields": ["x", "y"],
+             "array": {"count": 4, "sep": "|"}}
         ]}
     ]
 }
@@ -78,7 +87,9 @@ def test_emits_struct_array_register_struct_array_and_static_assert():
     assert 'registerStructArray("boxes"' in out
     assert 'std::extent_v<decltype(s->boxes)> >= 4' in out
     assert 'return &s->boxes[i];' in out
-    assert '"box", 4, "|"' in out
+    assert '{"x", "y"}' in out      # fields
+    assert '4' in out               # count
+    assert '"|"' in out             # arraySep
 
 
 def run_gen_expect_error(schema_text, needle):
@@ -92,8 +103,6 @@ def run_gen_expect_error(schema_text, needle):
 
 
 def test_rejects_array_member_without_field_or_block():
-    # M-5: a member with "array" but neither "field" nor "block" is malformed
-    # (e.g. a typo'd "block" -> "bloc"). Must fail loudly, not silently skip.
     schema = json.dumps({"deviceCtxType": "sv::DeviceCtx", "structs": [
         {"name": "Ev", "members": [{"bloc": "x", "array": {"count": 2, "sep": "-"}}]}
     ]})
@@ -101,7 +110,6 @@ def test_rejects_array_member_without_field_or_block():
 
 
 def test_rejects_member_with_no_recognized_key():
-    # A member that is neither field, block, nor array — silent skip is wrong.
     schema = json.dumps({"deviceCtxType": "sv::DeviceCtx", "structs": [
         {"name": "Ev", "members": [{"unknown": "thing"}]}
     ]})
@@ -109,14 +117,34 @@ def test_rejects_member_with_no_recognized_key():
 
 
 def test_rejects_scalar_array_missing_count():
-    # A scalar array member whose "array" object lacks "count" — must fail
-    # with a clear message, not a cryptic KeyError.
     schema = json.dumps({"deviceCtxType": "sv::DeviceCtx", "structs": [
         {"name": "Ev", "members": [
             {"field": "ids", "type": "int", "fmt": "%d", "array": {"sep": "-"}}
         ]}
     ]})
     run_gen_expect_error(schema, "count")
+
+
+def test_rejects_field_name_starting_with_r_():
+    schema = json.dumps({"deviceCtxType": "sv::DeviceCtx", "structs": [
+        {"name": "Ev", "members": [{"field": "r_x", "type": "int", "fmt": "%d"}]}
+    ]})
+    run_gen_expect_error(schema, "r_")
+
+
+def test_rejects_block_name_starting_with_r_():
+    schema = json.dumps({"deviceCtxType": "sv::DeviceCtx", "structs": [
+        {"name": "Ev", "members": [{"block": "r_bad", "sep": ",", "fields": ["x"]}]}
+    ]})
+    run_gen_expect_error(schema, "r_")
+
+
+def test_rejects_block_missing_fields():
+    schema = json.dumps({"deviceCtxType": "sv::DeviceCtx", "structs": [
+        {"name": "Ev", "members": [{"block": "b", "sep": ",", "ptr": False}]}
+    ]})
+    run_gen_expect_error(schema, "fields")
+
 
 if __name__ == "__main__":
     import traceback

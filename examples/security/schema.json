@@ -2,24 +2,25 @@
   "deviceCtxType": "MyDeviceCtx",
   "structs": [
     {"name": "Event", "members": [
-        {"field": "timestamp", "as": "time", "type": "uint64", "fmt": "%llu"},
-        {"block": "person", "ptr": true,  "subRecipe": "person"},
-        {"block": "rect",   "ptr": false, "subRecipe": "box"},
-        {"field": "feature_ids", "as": "feat_ids", "type": "int", "fmt": "%d",
+        {"field": "timestamp", "as": "time", "desc": "时间戳", "type": "uint64", "fmt": "%llu"},
+        {"block": "person", "desc": "人体信息", "ptr": true, "sep": "-", "fields": ["name", "age"]},
+        {"block": "rect",   "desc": "检测框",   "ptr": false, "sep": ",", "fields": ["x", "y", "w", "h", "tags"]},
+        {"field": "feature_ids", "as": "feat_ids", "desc": "特征ID列表", "type": "int", "fmt": "%d",
          "array": {"count": 8, "sep": "-"}},
-        {"block": "boxes", "array": {"subRecipe": "box", "count": 4, "sep": "|"}}
+        {"block": "boxes", "desc": "检测框数组", "sep": ",", "fields": ["x", "y", "w", "h", "tags"],
+         "array": {"count": 4, "sep": "|"}}
     ]},
     {"name": "PersonInfo", "members": [
-        {"field": "name", "as": "name", "type": "cstr", "fmt": "%s"},
-        {"field": "age",  "as": "age",  "type": "int",   "fmt": "%d"}
+        {"field": "name", "desc": "姓名", "type": "cstr", "fmt": "%s"},
+        {"field": "age",  "desc": "年龄", "type": "int",   "fmt": "%d"}
     ]},
     {"name": "Box", "members": [
-        {"field": "x", "type": "int", "fmt": "%d"},
-        {"field": "y", "type": "int", "fmt": "%d"},
-        {"field": "w", "type": "int", "fmt": "%d"},
-        {"field": "h", "type": "int", "fmt": "%d"},
-        {"field": "tags", "type": "int", "fmt": "%d", "array": {"count": 2, "sep": "-"}}
+        {"field": "x", "desc": "横坐标", "type": "int", "fmt": "%d"},
+        {"field": "y", "desc": "纵坐标", "type": "int", "fmt": "%d"},
+        {"field": "w", "desc": "宽", "type": "int", "fmt": "%d"},
+        {"field": "h", "desc": "高", "type": "int", "fmt": "%d"},
+        {"field": "tags", "desc": "标签", "type": "int", "fmt": "%d", "array": {"count": 2, "sep": "-"}}
     ]}
   ],
-  "device": [{"getter": "cameraId", "as": "camera"}]
+  "device": [{"getter": "cameraId", "as": "camera", "desc": "摄像头编号"}]
 }

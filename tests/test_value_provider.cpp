@@ -60,66 +60,44 @@ struct ArrBox { int x, y; };
 struct ArrEventBox { ArrBox boxes[4]; };
 }
 
-TEST_CASE("ArrayStructBlockProvider: navigates each element, runs sub-recipe, joins with sep") {
-    // Build a sub-recipe "x,y" (no comma between, to isolate array-traversal logic).
-    // RecipeB is immutable once published (shared_ptr<const>), so build non-const then convert.
-    auto subMut = std::make_shared<sv::RecipeB>();
-    {
-        auto xq = sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
-            const ArrBox* b = static_cast<const ArrBox*>(p);
-            char buf[16]; std::snprintf(buf, sizeof(buf), "%d", b->x); return buf;
-        });
-        auto yq = sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
-            const ArrBox* b = static_cast<const ArrBox*>(p);
-            char buf[16]; std::snprintf(buf, sizeof(buf), "%d", b->y); return buf;
-        });
-        subMut->steps.push_back(sv::StepB{xq.get()});
-        subMut->steps.push_back(sv::StepB{yq.get()});
-        subMut->ownedProviders.push_back(std::move(xq));
-        subMut->ownedProviders.push_back(std::move(yq));
-    }
-    std::shared_ptr<const sv::RecipeB> subConst = std::move(subMut);
-
+TEST_CASE("ArrayStructBlockProvider: navigates each element, joins fields with sep") {
+    // Field providers for x, y (on ArrBox). No sub-recipe — field list + sep.
+    auto xq = sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
+        const ArrBox* b = static_cast<const ArrBox*>(p);
+        char buf[16]; std::snprintf(buf, sizeof(buf), "%d", b->x); return buf;
+    });
+    auto yq = sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
+        const ArrBox* b = static_cast<const ArrBox*>(p);
+        char buf[16]; std::snprintf(buf, sizeof(buf), "%d", b->y); return buf;
+    });
     sv::IndexedNavigator nav([](const void* p, std::size_t i) -> const void* {
         const ArrEventBox* e = static_cast<const ArrEventBox*>(p);
         return &e->boxes[i];
     });
-    sv::ArrayStructBlockProvider asbp(nav, subConst, 4, "|");
+    // fields [x, y], element-internal sep="", element-between sep="|" → "12|34|56|78"
+    sv::ArrayStructBlockProvider asbp(nav, {xq.get(), yq.get()}, 4, "", "|");
     sv::DeviceCtx dummy;
     ArrEventBox e{ {{1,2},{3,4},{5,6},{7,8}} };
-    // Each box runs "x,y" sub-recipe (x="1" + y="2" = "12"), joined with "|"
     CHECK(asbp.get(&e, dummy) == "12|34|56|78");
 }
 
-TEST_CASE("ArrayStructBlockProviderA: Route A variant mirrors B (loop/join via runRecipeA)") {
-    // Build a Route A sub-recipe "x,y" (StepA Field bindings, no comma to isolate traversal).
-    // RecipeA is immutable once published (shared_ptr<const>), so build non-const then convert.
-    auto subMut = std::make_shared<sv::RecipeA>();
-    {
-        auto xq = sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
-            const ArrBox* b = static_cast<const ArrBox*>(p);
-            char buf[16]; std::snprintf(buf, sizeof(buf), "%d", b->x); return buf;
-        });
-        auto yq = sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
-            const ArrBox* b = static_cast<const ArrBox*>(p);
-            char buf[16]; std::snprintf(buf, sizeof(buf), "%d", b->y); return buf;
-        });
-        sv::StepA sx; sx.kind = sv::StepKind::Field; sx.binding = sv::FieldBinding{xq.get()};
-        sv::StepA sy; sy.kind = sv::StepKind::Field; sy.binding = sv::FieldBinding{yq.get()};
-        subMut->steps.push_back(sx);
-        subMut->steps.push_back(sy);
-        subMut->ownedProviders.push_back(std::move(xq));
-        subMut->ownedProviders.push_back(std::move(yq));
-    }
-    std::shared_ptr<const sv::RecipeA> subConst = std::move(subMut);
-
+TEST_CASE("ArrayStructBlockProviderA: Route A variant mirrors B (field-list traversal)") {
+    // Same field providers + nav as the B test. ArrayStructBlockProviderA now has
+    // identical logic (field-list traversal, no runRecipeA).
+    auto xq = sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
+        const ArrBox* b = static_cast<const ArrBox*>(p);
+        char buf[16]; std::snprintf(buf, sizeof(buf), "%d", b->x); return buf;
+    });
+    auto yq = sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
+        const ArrBox* b = static_cast<const ArrBox*>(p);
+        char buf[16]; std::snprintf(buf, sizeof(buf), "%d", b->y); return buf;
+    });
     sv::IndexedNavigator nav([](const void* p, std::size_t i) -> const void* {
         const ArrEventBox* e = static_cast<const ArrEventBox*>(p);
         return &e->boxes[i];
     });
-    sv::ArrayStructBlockProviderA asbp(nav, subConst, 4, "|");
+    sv::ArrayStructBlockProviderA asbp(nav, {xq.get(), yq.get()}, 4, "", "|");
     sv::DeviceCtx dummy;
     ArrEventBox e{ {{1,2},{3,4},{5,6},{7,8}} };
-    // Parity with the B-variant test: same data, same expected "12|34|56|78".
     CHECK(asbp.get(&e, dummy) == "12|34|56|78");
 }

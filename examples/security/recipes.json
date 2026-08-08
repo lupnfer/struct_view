@@ -1,7 +1,5 @@
 {
   "recipes": [
-    { "name": "alarm_line", "template": "${camera}:${time}|${person}@${rect}|${feat_ids}|${boxes}" },
-    { "name": "person",     "template": "${name}-${age}" },
-    { "name": "box",        "template": "${x},${y},${w},${h}(${tags})" }
+    { "name": "r_alarm_line", "desc": "告警行", "template": "${camera}:${time}|${person}@${rect}|${feat_ids}|${boxes}" }
   ]
 }

@@ -47,6 +47,7 @@ ConfigLoader::Result ConfigLoader::parse(std::string_view jsonText) {
     for (const auto& rc : *recipes) {
         RecipeAst ra;
         ra.name = rc.value("name", "");
+        ra.desc = rc.value("desc", "");
         ra.segments = tokenize(rc.value("template", ""));
         r.ast.recipes.push_back(std::move(ra));
     }

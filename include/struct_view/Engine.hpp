@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include "Errors.hpp"
 #include "NameRegistry.hpp"
 #include "ConnectorLib.hpp"
@@ -15,6 +16,7 @@ class Engine {
     ConnectorLib& connectors_;
     RecipeStore<RecipeB> store_;
     RecipeStore<RecipeA> storeA_;
+    std::unordered_map<std::string, std::string> recipeDescs_;   // recipe name → desc
 public:
     Engine(NameRegistry& names, ConnectorLib& connectors);
 
@@ -34,6 +36,9 @@ public:
     std::string renderA(const std::string& recipeName,
                         const void* structPtr,
                         const DeviceCtx& ctx) const;
+
+    // Returns the desc registered for a recipe, or empty if none (spec §3.2).
+    const std::string& describeRecipe(const std::string& recipeName) const;
 };
 
 } // namespace sv

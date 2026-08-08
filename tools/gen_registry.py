@@ -29,31 +29,38 @@ TYPE_CAST = {
     "cstr":   "(const char*)",
 }
 
+def _esc(s):
+    """Escape a string for use inside a C++ string literal."""
+    return s.replace('\\', '\\\\').replace('"', '\\"')
+
 def field_line(struct_name, member):
     field = member["field"]
     as_name = member.get("as", field)
     typ = member["type"]
     fmt = member["fmt"]
     cast = TYPE_CAST[typ]
-    # cstr: char arrays decay; cast to const char* is safe for char[N] and char*
+    desc = _esc(member.get("desc", ""))
     return f'''    reg.registerProvider("{as_name}", sv::makeProvider(
         [](const void* p, const sv::DeviceCtx&) -> std::string {{
             const {struct_name}* s = static_cast<const {struct_name}*>(p);
             char buf[256];
             std::snprintf(buf, sizeof(buf), "{fmt}", {cast}s->{field});
             return std::string(buf);
-        }}));\n'''
+        }}), "{desc}");\n'''
 
 def block_line(struct_name, member):
     block = member["block"]
-    sub = member["subRecipe"]
     ptr = member.get("ptr", False)
     deref = f"static_cast<const void*>(s->{block})" if ptr else f"static_cast<const void*>(&s->{block})"
+    fields = member.get("fields", [])
+    sep = _esc(member.get("sep", ""))
+    desc = _esc(member.get("desc", ""))
+    fields_lit = "{" + ", ".join(f'"{f}"' for f in fields) + "}" if fields else "{}"
     return f'''    reg.registerStruct("{block}", sv::Navigator(
         [](const void* p) -> const void* {{
             const {struct_name}* s = static_cast<const {struct_name}*>(p);
             return {deref};
-        }}), "{sub}");\n'''
+        }}), {fields_lit}, "{sep}", "{desc}");\n'''
 
 def field_array_line(struct_name, member):
     field = member["field"]
@@ -64,7 +71,8 @@ def field_array_line(struct_name, member):
     count = arr["count"]
     sep = arr["sep"]
     cast = TYPE_CAST[typ]
-    sep_lit = sep.replace('\\', '\\\\').replace('"', '\\"')
+    sep_lit = _esc(sep)
+    desc = _esc(member.get("desc", ""))
     return f'''    reg.registerProvider("{as_name}", sv::makeProvider(
         [](const void* p, const sv::DeviceCtx&) -> std::string {{
             const {struct_name}* s = static_cast<const {struct_name}*>(p);
@@ -78,39 +86,41 @@ def field_array_line(struct_name, member):
                 out += buf;
             }}
             return out;
-        }}));\n'''
+        }}), "{desc}");\n'''
 
 def block_array_line(struct_name, member):
     block = member["block"]
     arr = member["array"]
-    sub = arr["subRecipe"]
     count = arr["count"]
-    sep = arr["sep"]
-    sep_lit = sep.replace('\\', '\\\\').replace('"', '\\"')
+    array_sep = arr["sep"]
+    fields = member.get("fields", [])
+    sep = _esc(member.get("sep", ""))
+    array_sep_lit = _esc(array_sep)
+    desc = _esc(member.get("desc", ""))
+    fields_lit = "{" + ", ".join(f'"{f}"' for f in fields) + "}" if fields else "{}"
     return f'''    reg.registerStructArray("{block}", sv::IndexedNavigator(
         [](const void* p, std::size_t i) -> const void* {{
             const {struct_name}* s = static_cast<const {struct_name}*>(p);
             static_assert(std::extent_v<decltype(s->{block})> >= {count},
                           "struct_view: {block} length drift (schema count={count})");
             return &s->{block}[i];
-        }}), "{sub}", {count}, "{sep_lit}");\n'''
+        }}), {fields_lit}, {count}, "{sep}", "{array_sep_lit}", "{desc}");\n'''
 
 def device_line(device_ctx_type, dev):
     getter = dev["getter"]
     as_name = dev.get("as", getter)
+    desc = _esc(dev.get("desc", ""))
     return f'''    reg.registerProvider("{as_name}", sv::makeProvider(
         [](const void*, const sv::DeviceCtx& base) -> std::string {{
             const {device_ctx_type}& ctx = static_cast<const {device_ctx_type}&>(base);
             return ctx.{getter}();
-        }}));\n'''
+        }}), "{desc}");\n'''
 
 def validate_member(struct_name, m):
     """Validate a single member's shape; raise ValueError with a clear message
     if malformed (so schema typos fail the build loudly, not silently)."""
     has_field, has_block, has_array = "field" in m, "block" in m, "array" in m
-    # 1. Must have exactly one of field/block (the C member to read). 'array' alone
-    #    (no field/block) is a typo like {"bloc": ..., "array": ...} — would be
-    #    silently skipped without this check.
+    # 1. Must have exactly one of field/block (the C member to read).
     if not has_field and not has_block:
         raise ValueError(
             f"struct_view schema: struct '{struct_name}' has a member with neither "
@@ -120,25 +130,37 @@ def validate_member(struct_name, m):
         raise ValueError(
             f"struct_view schema: struct '{struct_name}' member has both 'field' and "
             f"'block' — a member is either a scalar field or a struct block, not both.")
-    # 2. Array members need a well-formed 'array' object.
+    # 2. field/block names must not start with r_ (reserved for recipes, spec §2.2).
+    name = m.get("field") or m.get("block")
+    if name and name.startswith("r_"):
+        raise ValueError(
+            f"struct_view schema: struct '{struct_name}' field/block '{name}' must not start "
+            f"with 'r_' (reserved for recipe names).")
+    # 3. block members must have fields + sep (expansion rule in schema, spec §4.1).
+    if has_block:
+        if "fields" not in m:
+            raise ValueError(
+                f"struct_view schema: struct '{struct_name}' block '{m['block']}' is missing "
+                f"required key 'fields' (block field expansion order).")
+        if "sep" not in m:
+            raise ValueError(
+                f"struct_view schema: struct '{struct_name}' block '{m['block']}' is missing "
+                f"required key 'sep' (block field separator).")
+    # 4. Array members need a well-formed 'array' object.
     if has_array:
         arr = m["array"]
         if not isinstance(arr, dict):
             raise ValueError(
-                f"struct_view schema: struct '{struct_name}' member '{m.get('field') or m.get('block')}' "
+                f"struct_view schema: struct '{struct_name}' member '{name}' "
                 f"has 'array' that is not an object (got {type(arr).__name__}).")
         if "count" not in arr:
             raise ValueError(
-                f"struct_view schema: struct '{struct_name}' member '{m.get('field') or m.get('block')}' "
+                f"struct_view schema: struct '{struct_name}' member '{name}' "
                 f"is an array but 'array' is missing required key 'count'.")
         if "sep" not in arr:
             raise ValueError(
-                f"struct_view schema: struct '{struct_name}' member '{m.get('field') or m.get('block')}' "
+                f"struct_view schema: struct '{struct_name}' member '{name}' "
                 f"is an array but 'array' is missing required key 'sep'.")
-        if has_block and "subRecipe" not in arr:
-            raise ValueError(
-                f"struct_view schema: struct '{struct_name}' struct-array '{m['block']}' "
-                f"is missing 'array.subRecipe' (which sub-recipe each element runs).")
         if has_field and ("type" not in m or "fmt" not in m):
             missing = "type" if "type" not in m else "fmt"
             raise ValueError(

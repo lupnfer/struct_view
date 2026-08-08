@@ -33,7 +33,11 @@ std::string runRecipeA(const RecipeA& r, const void* structPtr, const DeviceCtx&
                 break;
             case StepKind::SubRecipe: {
                 const auto& b = std::get<SubRecipeBinding>(s.binding);
-                out += runRecipeA(*b.sub, b.nav.navigate(structPtr), ctx);
+                const void* child = b.nav.navigate(structPtr);
+                for (std::size_t j = 0; j < b.fieldProviders.size(); ++j) {
+                    if (j) out += b.sep;
+                    out += b.fieldProviders[j]->get(child, ctx);
+                }
             } break;
         }
     }
