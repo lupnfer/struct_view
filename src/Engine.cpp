@@ -36,6 +36,14 @@ LoadResult Engine::loadConfig(std::string_view jsonText) {
     // map keep their snapshot alive via shared_ptr refcount (RCU); they see either
     // the old map or the new map, never a mix. spec §3.4a Rule 2 / §5 (no half-publish).
     store_.publishAll(std::move(built.recipes));
+    // Extract recipe descs for client display (spec §3.2). Replaced atomically
+    // with the recipes (same loadConfig call). recipeDescs_ is not read on the
+    // hot path (only via describeRecipe), so no RCU needed — simple move.
+    std::unordered_map<std::string, std::string> newDescs;
+    for (const auto& r : parsed.ast.recipes) {
+        if (!r.desc.empty()) newDescs[r.name] = r.desc;
+    }
+    recipeDescs_ = std::move(newDescs);
     lr.ok = true;
     return lr;
 }
@@ -83,6 +91,12 @@ std::string Engine::renderA(const std::string& recipeName,
     auto snap = storeA_.snapshot(recipeName);
     if (!snap) return "";
     return runRecipeA(*snap, structPtr, ctx);
+}
+
+const std::string& Engine::describeRecipe(const std::string& recipeName) const {
+    auto it = recipeDescs_.find(recipeName);
+    static const std::string EMPTY;
+    return it == recipeDescs_.end() ? EMPTY : it->second;
 }
 
 } // namespace sv

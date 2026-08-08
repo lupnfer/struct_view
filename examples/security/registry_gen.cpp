@@ -14,17 +14,17 @@ void registerStructViewNames(sv::NameRegistry& reg) {
             char buf[256];
             std::snprintf(buf, sizeof(buf), "%llu", (unsigned long long)s->timestamp);
             return std::string(buf);
-        }));
+        }), "时间戳");
     reg.registerStruct("person", sv::Navigator(
         [](const void* p) -> const void* {
             const Event* s = static_cast<const Event*>(p);
             return static_cast<const void*>(s->person);
-        }), "person");
+        }), {"name", "age"}, "-", "人体信息");
     reg.registerStruct("rect", sv::Navigator(
         [](const void* p) -> const void* {
             const Event* s = static_cast<const Event*>(p);
             return static_cast<const void*>(&s->rect);
-        }), "box");
+        }), {"x", "y", "w", "h", "tags"}, ",", "检测框");
     reg.registerProvider("feat_ids", sv::makeProvider(
         [](const void* p, const sv::DeviceCtx&) -> std::string {
             const Event* s = static_cast<const Event*>(p);
@@ -38,56 +38,56 @@ void registerStructViewNames(sv::NameRegistry& reg) {
                 out += buf;
             }
             return out;
-        }));
+        }), "特征ID列表");
     reg.registerStructArray("boxes", sv::IndexedNavigator(
         [](const void* p, std::size_t i) -> const void* {
             const Event* s = static_cast<const Event*>(p);
             static_assert(std::extent_v<decltype(s->boxes)> >= 4,
                           "struct_view: boxes length drift (schema count=4)");
             return &s->boxes[i];
-        }), "box", 4, "|");
+        }), {"x", "y", "w", "h", "tags"}, 4, ",", "|", "检测框数组");
     reg.registerProvider("name", sv::makeProvider(
         [](const void* p, const sv::DeviceCtx&) -> std::string {
             const PersonInfo* s = static_cast<const PersonInfo*>(p);
             char buf[256];
             std::snprintf(buf, sizeof(buf), "%s", (const char*)s->name);
             return std::string(buf);
-        }));
+        }), "姓名");
     reg.registerProvider("age", sv::makeProvider(
         [](const void* p, const sv::DeviceCtx&) -> std::string {
             const PersonInfo* s = static_cast<const PersonInfo*>(p);
             char buf[256];
             std::snprintf(buf, sizeof(buf), "%d", (int)s->age);
             return std::string(buf);
-        }));
+        }), "年龄");
     reg.registerProvider("x", sv::makeProvider(
         [](const void* p, const sv::DeviceCtx&) -> std::string {
             const Box* s = static_cast<const Box*>(p);
             char buf[256];
             std::snprintf(buf, sizeof(buf), "%d", (int)s->x);
             return std::string(buf);
-        }));
+        }), "横坐标");
     reg.registerProvider("y", sv::makeProvider(
         [](const void* p, const sv::DeviceCtx&) -> std::string {
             const Box* s = static_cast<const Box*>(p);
             char buf[256];
             std::snprintf(buf, sizeof(buf), "%d", (int)s->y);
             return std::string(buf);
-        }));
+        }), "纵坐标");
     reg.registerProvider("w", sv::makeProvider(
         [](const void* p, const sv::DeviceCtx&) -> std::string {
             const Box* s = static_cast<const Box*>(p);
             char buf[256];
             std::snprintf(buf, sizeof(buf), "%d", (int)s->w);
             return std::string(buf);
-        }));
+        }), "宽");
     reg.registerProvider("h", sv::makeProvider(
         [](const void* p, const sv::DeviceCtx&) -> std::string {
             const Box* s = static_cast<const Box*>(p);
             char buf[256];
             std::snprintf(buf, sizeof(buf), "%d", (int)s->h);
             return std::string(buf);
-        }));
+        }), "高");
     reg.registerProvider("tags", sv::makeProvider(
         [](const void* p, const sv::DeviceCtx&) -> std::string {
             const Box* s = static_cast<const Box*>(p);
@@ -101,10 +101,10 @@ void registerStructViewNames(sv::NameRegistry& reg) {
                 out += buf;
             }
             return out;
-        }));
+        }), "标签");
     reg.registerProvider("camera", sv::makeProvider(
         [](const void*, const sv::DeviceCtx& base) -> std::string {
             const MyDeviceCtx& ctx = static_cast<const MyDeviceCtx&>(base);
             return ctx.cameraId();
-        }));
+        }), "摄像头编号");
 }

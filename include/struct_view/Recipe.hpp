@@ -38,7 +38,8 @@ struct DeviceBinding    { const ValueProvider* provider; };  // device getter (o
 struct RecipeA;  // forward for SubRecipeBinding
 struct SubRecipeBinding {
     Navigator nav;
-    std::shared_ptr<const RecipeA> sub;   // RCU: recipe-private, bound once (spec §3.4a Rule 1)
+    std::vector<const ValueProvider*> fieldProviders;   // block fields (in order)
+    std::string sep;                                     // field separator
 };
 
 struct StepA {
@@ -50,12 +51,10 @@ struct RecipeA {
     std::string name;
     std::vector<StepA> steps;
     // Owns ArrayStructBlockProviderA instances for struct-array steps (Route A
-    // reuses the Route B provider pattern via FieldBinding, spec §5). Route A
-    // does not inline the array loop — it calls the provider's get() through a
-    // single virtual dispatch. Field/Device bindings hold raw ptrs into
-    // NameRegistry-owned providers (longer-lived, read-only); ConnectorBinding
-    // holds the literal by value (no heap); SubRecipeBinding holds shared_ptr
-    // to its sub-recipe (co-ownership, no separate provider object).
+    // reuses the provider via FieldBinding, spec §5). Field/Device bindings hold
+    // raw ptrs into NameRegistry-owned providers (longer-lived, read-only);
+    // ConnectorBinding holds the literal by value (no heap); SubRecipeBinding
+    // holds the block's field provider list + sep (no sub-recipe, spec §4).
     std::vector<std::unique_ptr<ValueProvider>> ownedProviders;
 };
 

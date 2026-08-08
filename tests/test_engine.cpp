@@ -26,13 +26,13 @@ TEST_CASE("Engine: loadConfig + render end-to-end (Route B)") {
     sv::Engine engine(reg, lib);
 
     auto lr = engine.loadConfig(R"({"recipes":[
-        {"name":"alarm","template":"${camera}:${time}"}]})");
+        {"name":"r_alarm","template":"${camera}:${time}"}]})");
     REQUIRE(lr.ok);
     REQUIRE(lr.errors.empty());
 
     Event e{1717171717};
     MyDeviceCtx ctx;
-    CHECK(engine.render("alarm", &e, ctx) == "CAM001:1717171717");
+    CHECK(engine.render("r_alarm", &e, ctx) == "CAM001:1717171717");
 }
 
 TEST_CASE("Engine: invalid config returns errors and does not publish") {
@@ -67,7 +67,7 @@ TEST_CASE("Engine: render with struct array end-to-end") {
     reg.registerStructArray("boxes",
         sv::IndexedNavigator([](const void* p, std::size_t i) -> const void* {
             const EngArrEv* e = static_cast<const EngArrEv*>(p); return &e->boxes[i];
-        }), "box", 4, "|");
+        }), {"x", "y"}, 4, ",", "|");
     reg.registerProvider("x", sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
         const EngArrBox* b = static_cast<const EngArrBox*>(p); char buf[16]; std::snprintf(buf,sizeof(buf),"%d",b->x); return buf;
     }));
@@ -75,12 +75,10 @@ TEST_CASE("Engine: render with struct array end-to-end") {
         const EngArrBox* b = static_cast<const EngArrBox*>(p); char buf[16]; std::snprintf(buf,sizeof(buf),"%d",b->y); return buf;
     }));
     sv::ConnectorLib lib;
-    lib.add("comma", ",");
     sv::Engine engine(reg, lib);
     REQUIRE(engine.loadConfig(R"({"recipes":[
-        {"name":"line","template":"${time}|${boxes}"},
-        {"name":"box","template":"${x}${comma}${y}"}]})").ok);
+        {"name":"r_line","template":"${time}|${boxes}"}]})").ok);
     EngArrEv e{42, {{1,2},{3,4},{5,6},{7,8}} };
     MyDeviceCtx ctx;
-    CHECK(engine.render("line", &e, ctx) == "42|1,2|3,4|5,6|7,8");
+    CHECK(engine.render("r_line", &e, ctx) == "42|1,2|3,4|5,6|7,8");
 }

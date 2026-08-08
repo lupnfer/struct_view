@@ -34,6 +34,6 @@ int main() {
           {0,0,0,0,{0,0}}, {0,0,0,0,{0,0}}}
     };
     MyDeviceCtx ctx;
-    std::cout << engine.render("alarm_line", &ev, ctx) << "\n";
+    std::cout << engine.render("r_alarm_line", &ev, ctx) << "\n";
     return 0;
 }

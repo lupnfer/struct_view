@@ -10,17 +10,17 @@ Builder::Result Builder::compile(const ConfigAst& ast,
                                  const ConnectorLib& connectors) {
     Result r;
 
-    // Pass 1: compile each recipe. Struct-block refs are deferred to Pass 2 —
-    // their recipe-private StructBlockProvider needs a shared_ptr to the
-    // sub-recipe, which may be compiled later in this loop (forward refs ok).
+    // Pass 1: compile each recipe. Struct-block refs + user-sub-recipe refs are
+    // deferred to Pass 2 (they reference recipes compiled later — forward refs ok).
     struct PendingBind {
         std::shared_ptr<RecipeB> rb;
         std::size_t stepIdx;
-        std::string blockName;
+        std::string name;       // block name OR sub-recipe name
     };
     std::unordered_map<std::string, std::shared_ptr<RecipeB>> byName;
-    std::vector<PendingBind> pending;       // single struct blocks
-    std::vector<PendingBind> pendingArray;  // struct arrays (spec §4.4)
+    std::vector<PendingBind> pending;        // single struct blocks
+    std::vector<PendingBind> pendingArray;   // struct arrays
+    std::vector<PendingBind> pendingSub;     // user sub-recipe refs (r_ names in byName)
 
     for (const auto& ra : ast.recipes) {
         auto rb = std::make_shared<RecipeB>();
@@ -31,21 +31,17 @@ Builder::Result Builder::compile(const ConfigAst& ast,
                 if (const ValueProvider* vp = names.lookup(seg.text)) {
                     step.provider = vp;                      // field/device (NameRegistry-owned)
                 } else if (names.isStructBlock(seg.text)) {
-                    // Recipe-private StructBlockProvider created in Pass 2.
                     pending.push_back({rb, rb->steps.size(), seg.text});
-                    // step.provider left nullptr; fixed in Pass 2.
                 } else if (names.isStructArray(seg.text)) {
-                    // Recipe-private ArrayStructBlockProvider created in Pass 2.
                     pendingArray.push_back({rb, rb->steps.size(), seg.text});
-                    // step.provider left nullptr; fixed in Pass 2.
                 } else if (auto lit = connectors.get(seg.text)) {
                     auto cp = std::make_unique<ConnectorProvider>(*lit);
                     step.provider = cp.get();
                     rb->ownedProviders.push_back(std::move(cp));
                 } else {
-                    // Validator should have caught this; defensive.
-                    r.errors.push_back({ra.name, "unresolved name at compile: " + seg.text, 0});
-                    continue;
+                    // Not a field/block/array/connector — could be a user sub-recipe
+                    // (resolved in Pass 2 after all recipes are compiled). Defer.
+                    pendingSub.push_back({rb, rb->steps.size(), seg.text});
                 }
             } else {
                 auto cp = std::make_unique<ConnectorProvider>(seg.text);
@@ -59,46 +55,67 @@ Builder::Result Builder::compile(const ConfigAst& ast,
 
     if (!r.errors.empty()) { r.ok = false; return r; }
 
-    // Pass 2: instantiate recipe-private StructBlockProviders, each holding a
-    // shared_ptr to its own sub-recipe (bound once, immutable after publish).
-    // Different recipe versions own different provider instances — no shared
-    // mutable sub_ re-binding (spec §3.4a Rule 1). The shared_ptr keeps the
-    // sub-recipe graph alive for any reader snapshotting the parent (Rule 3).
+    // Pass 2: struct blocks — field-list provider (no sub-recipe, spec §4).
     for (auto& p : pending) {
-        const StructBlockDecl* decl = names.findStructBlockDecl(p.blockName);
-        if (!decl) {  // Validator should have caught this; defensive.
-            r.errors.push_back({p.rb->name, "unknown struct block: " + p.blockName, 0});
+        const StructBlockDecl* decl = names.findStructBlockDecl(p.name);
+        if (!decl) {
+            r.errors.push_back({p.rb->name, "unknown struct block: " + p.name, 0});
             continue;
         }
-        auto it = byName.find(decl->subRecipeName);
-        if (it == byName.end()) {
-            r.errors.push_back({p.rb->name, "subRecipe missing at bind: " + decl->subRecipeName, 0});
-            continue;
+        std::vector<const ValueProvider*> fields;
+        bool missing = false;
+        for (const auto& fn : decl->fieldNames) {
+            const ValueProvider* vp = names.lookup(fn);
+            if (!vp) {
+                r.errors.push_back({p.rb->name, "block field not found: " + fn, 0});
+                missing = true;
+            } else {
+                fields.push_back(vp);
+            }
         }
-        // Copy of it->second (shared_ptr<RecipeB> -> shared_ptr<const RecipeB>)
-        // bumps refcount: parent recipe now co-owns its sub-recipe.
-        auto sbp = std::make_unique<StructBlockProvider>(decl->nav, it->second);
+        if (missing) continue;
+        auto sbp = std::make_unique<StructBlockProvider>(decl->nav, std::move(fields), decl->sep);
         p.rb->steps[p.stepIdx].provider = sbp.get();
         p.rb->ownedProviders.push_back(std::move(sbp));
     }
 
-    // Pass 2b: instantiate recipe-private ArrayStructBlockProviders (struct arrays).
-    // Same RCU pattern as Pass 2 — recipe-private, shared_ptr to sub-recipe (§3.4a Rule 1/3).
+    // Pass 2b: struct arrays — field-list provider (no sub-recipe, spec §4).
     for (auto& pa : pendingArray) {
-        const StructArrayDecl* decl = names.findStructArrayDecl(pa.blockName);
-        if (!decl) {  // Validator should have caught this; defensive.
-            r.errors.push_back({pa.rb->name, "unknown struct array: " + pa.blockName, 0});
+        const StructArrayDecl* decl = names.findStructArrayDecl(pa.name);
+        if (!decl) {
+            r.errors.push_back({pa.rb->name, "unknown struct array: " + pa.name, 0});
             continue;
         }
-        auto it = byName.find(decl->subRecipeName);
-        if (it == byName.end()) {
-            r.errors.push_back({pa.rb->name, "subRecipe missing at bind: " + decl->subRecipeName, 0});
-            continue;
+        std::vector<const ValueProvider*> fields;
+        bool missing = false;
+        for (const auto& fn : decl->fieldNames) {
+            const ValueProvider* vp = names.lookup(fn);
+            if (!vp) {
+                r.errors.push_back({pa.rb->name, "block field not found: " + fn, 0});
+                missing = true;
+            } else {
+                fields.push_back(vp);
+            }
         }
+        if (missing) continue;
         auto asbp = std::make_unique<ArrayStructBlockProvider>(
-            decl->nav, it->second, decl->count, decl->sep);
+            decl->nav, std::move(fields), decl->count, decl->sep, decl->arraySep);
         pa.rb->steps[pa.stepIdx].provider = asbp.get();
-        pa.rb->ownedProviders.push_back(std::move(asbp));   // recipe-private (RCU)
+        pa.rb->ownedProviders.push_back(std::move(asbp));
+    }
+
+    // Pass 2c: user sub-recipe refs — bind to the compiled recipe (RCU co-ownership).
+    // A SubRecipeProvider wraps the referenced recipe as a ValueProvider.
+    for (auto& ps : pendingSub) {
+        auto it = byName.find(ps.name);
+        if (it == byName.end()) {
+            r.errors.push_back({ps.rb->name, "unresolved name at bind: " + ps.name, 0});
+            continue;
+        }
+        // shared_ptr<RecipeB> -> shared_ptr<const RecipeB> copy bumps refcount.
+        auto srp = std::make_unique<SubRecipeProvider>(it->second);
+        ps.rb->steps[ps.stepIdx].provider = srp.get();
+        ps.rb->ownedProviders.push_back(std::move(srp));
     }
 
     if (!r.errors.empty()) { r.ok = false; return r; }

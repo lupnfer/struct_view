@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 #include "DeviceCtx.hpp"
 
 namespace sv {
@@ -49,18 +50,35 @@ public:
     std::string get(const void*, const DeviceCtx&) const override { return literal_; }
 };
 
-// A whole key struct block: navigate to child, run sub-recipe, return its string.
-// sub_ is bound at construction with a shared_ptr to the OWNING recipe's sub-recipe
-// (recipe-private, immutable after publish — spec §3.4a Rule 1/3). Each compiled
-// recipe version owns its own StructBlockProvider instances; there is no shared,
-// re-bound provider. Lifetime: owned by RecipeB::ownedProviders; the shared_ptr sub
-// keeps the sub-recipe graph alive for any in-flight render snapshotting the parent.
+// A whole key struct block: navigate to child, then join its fields with sep.
+// No sub-recipe — the field order + sep live in the schema (spec §4 of
+// name-convention spec). fieldProviders_ are raw ptrs into NameRegistry-owned
+// field providers (longer-lived, read-only). Lifetime: owned by RecipeB::ownedProviders.
 class StructBlockProvider : public ValueProvider {
     Navigator nav_;
+    std::vector<const ValueProvider*> fieldProviders_;   // child struct fields (in order)
+    std::string sep_;
+public:
+    StructBlockProvider(Navigator nav, std::vector<const ValueProvider*> fields, std::string sep)
+        : nav_(std::move(nav)), fieldProviders_(std::move(fields)), sep_(std::move(sep)) {}
+    std::string get(const void* structPtr, const DeviceCtx& ctx) const override;
+};
+
+// A user-composed sub-recipe referenced by ${r_name}. Wraps the compiled sub-recipe
+// (shared_ptr<const RecipeB>, RCU co-ownership) as a ValueProvider so it can be
+// slotted into a StepB. get() runs the sub-recipe on the same structPtr (spec §5).
+class SubRecipeProvider : public ValueProvider {
     std::shared_ptr<const RecipeB> sub_;
 public:
-    StructBlockProvider(Navigator nav, std::shared_ptr<const RecipeB> sub)
-        : nav_(std::move(nav)), sub_(std::move(sub)) {}
+    explicit SubRecipeProvider(std::shared_ptr<const RecipeB> sub) : sub_(std::move(sub)) {}
+    std::string get(const void* structPtr, const DeviceCtx& ctx) const override;
+};
+
+// Route A variant: wraps shared_ptr<const RecipeA> and runs runRecipeA (spec §5).
+class SubRecipeProviderA : public ValueProvider {
+    std::shared_ptr<const RecipeA> sub_;
+public:
+    explicit SubRecipeProviderA(std::shared_ptr<const RecipeA> sub) : sub_(std::move(sub)) {}
     std::string get(const void* structPtr, const DeviceCtx& ctx) const override;
 };
 
@@ -74,39 +92,38 @@ public:
     const void* navigate(const void* parent, std::size_t i) const { return fn_(parent, i); }
 };
 
-// A struct array: for each of count_ elements, navigate to &s->arr[i], run the
-// sub-recipe, join with sep_. Recipe-private, holds shared_ptr<const RecipeB> to
-// its sub-recipe (RCU section 3.4a Rule 1/3 -- same pattern as StructBlockProvider).
+// A struct array: for each of count_ elements, navigate to &s->arr[i], then
+// join the element's fields with sep_ (element-internal) and join elements with
+// arraySep_. No sub-recipe — field order + seps live in the schema (spec §4).
+// Recipe-private: owned by RecipeB::ownedProviders.
 class ArrayStructBlockProvider : public ValueProvider {
     IndexedNavigator nav_;
-    std::shared_ptr<const RecipeB> sub_;
+    std::vector<const ValueProvider*> fieldProviders_;   // per-element fields (in order)
     std::size_t count_;
-    std::string sep_;
+    std::string sep_;        // element-internal field separator
+    std::string arraySep_;   // element-between separator
 public:
-    ArrayStructBlockProvider(IndexedNavigator nav, std::shared_ptr<const RecipeB> sub,
-                             std::size_t count, std::string sep)
-        : nav_(std::move(nav)), sub_(std::move(sub)),
-          count_(count), sep_(std::move(sep)) {}
+    ArrayStructBlockProvider(IndexedNavigator nav, std::vector<const ValueProvider*> fields,
+                             std::size_t count, std::string sep, std::string arraySep)
+        : nav_(std::move(nav)), fieldProviders_(std::move(fields)),
+          count_(count), sep_(std::move(sep)), arraySep_(std::move(arraySep)) {}
     std::string get(const void* structPtr, const DeviceCtx& ctx) const override;
 };
 
-// Route A variant: same shape as ArrayStructBlockProvider but holds
-// shared_ptr<const RecipeA> and runs runRecipeA (spec §5 Route A parity).
-// Route A does NOT inline the array loop — it reuses this provider via FieldBinding
-// so the hot path is a single virtual call returning the whole array string.
-// Recipe-private: owned by RecipeA::ownedProviders; the shared_ptr sub_ keeps the
-// sub-recipe graph alive for any in-flight render snapshotting the parent (RCU
-// §3.4a Rule 1/3, same pattern as StructBlockProvider).
+// Route A variant: identical logic to ArrayStructBlockProvider (field-list
+// traversal, no runRecipeA). Route A reuses it via FieldBinding (spec §5).
+// Kept as a separate class for Route A ownership (RecipeA::ownedProviders).
 class ArrayStructBlockProviderA : public ValueProvider {
     IndexedNavigator nav_;
-    std::shared_ptr<const RecipeA> sub_;
+    std::vector<const ValueProvider*> fieldProviders_;
     std::size_t count_;
     std::string sep_;
+    std::string arraySep_;
 public:
-    ArrayStructBlockProviderA(IndexedNavigator nav, std::shared_ptr<const RecipeA> sub,
-                              std::size_t count, std::string sep)
-        : nav_(std::move(nav)), sub_(std::move(sub)),
-          count_(count), sep_(std::move(sep)) {}
+    ArrayStructBlockProviderA(IndexedNavigator nav, std::vector<const ValueProvider*> fields,
+                              std::size_t count, std::string sep, std::string arraySep)
+        : nav_(std::move(nav)), fieldProviders_(std::move(fields)),
+          count_(count), sep_(std::move(sep)), arraySep_(std::move(arraySep)) {}
     std::string get(const void* structPtr, const DeviceCtx& ctx) const override;
 };
 

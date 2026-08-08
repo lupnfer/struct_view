@@ -4,33 +4,50 @@
 
 namespace sv {
 
+std::string SubRecipeProvider::get(const void* structPtr, const DeviceCtx& ctx) const {
+    return runRecipeB(*sub_, structPtr, ctx);
+}
+
+std::string SubRecipeProviderA::get(const void* structPtr, const DeviceCtx& ctx) const {
+    return runRecipeA(*sub_, structPtr, ctx);
+}
+
 std::string StructBlockProvider::get(const void* structPtr, const DeviceCtx& ctx) const {
-    // sub_ is bound at construction (recipe-private); if null (defensive), emit nothing.
-    if (!sub_) return {};
+    if (fieldProviders_.empty()) return {};            // defensive
     const void* child = nav_.navigate(structPtr);
-    return runRecipeB(*sub_, child, ctx);
+    std::string out;
+    for (std::size_t i = 0; i < fieldProviders_.size(); ++i) {
+        if (i) out += sep_;                             // join semantics (skip before first)
+        out += fieldProviders_[i]->get(child, ctx);
+    }
+    return out;
 }
 
 std::string ArrayStructBlockProvider::get(const void* structPtr, const DeviceCtx& ctx) const {
-    // sub_ is bound at construction (recipe-private); if null (defensive), emit nothing.
-    if (!sub_) return {};
+    if (fieldProviders_.empty()) return {};
     std::string out;
     for (std::size_t i = 0; i < count_; ++i) {
-        if (i) out += sep_;                         // join semantics (skip before first)
+        if (i) out += arraySep_;                        // element-between
         const void* child = nav_.navigate(structPtr, i);
-        out += runRecipeB(*sub_, child, ctx);       // run sub-recipe per element
+        for (std::size_t j = 0; j < fieldProviders_.size(); ++j) {
+            if (j) out += sep_;                         // element-internal field-between
+            out += fieldProviders_[j]->get(child, ctx);
+        }
     }
     return out;
 }
 
 std::string ArrayStructBlockProviderA::get(const void* structPtr, const DeviceCtx& ctx) const {
-    // sub_ is bound at construction (recipe-private); if null (defensive), emit nothing.
-    if (!sub_) return {};
+    // Identical to ArrayStructBlockProvider::get (field-list traversal, no runRecipeA).
+    if (fieldProviders_.empty()) return {};
     std::string out;
     for (std::size_t i = 0; i < count_; ++i) {
-        if (i) out += sep_;                         // join semantics (skip before first)
+        if (i) out += arraySep_;
         const void* child = nav_.navigate(structPtr, i);
-        out += runRecipeA(*sub_, child, ctx);       // Route A runner per element
+        for (std::size_t j = 0; j < fieldProviders_.size(); ++j) {
+            if (j) out += sep_;
+            out += fieldProviders_[j]->get(child, ctx);
+        }
     }
     return out;
 }

@@ -16,9 +16,9 @@ struct HrEv { uint64_t timestamp; HrBox boxes[4]; };
 struct MyDeviceCtx : sv::DeviceCtx { std::string cameraId() const { return "C"; } };
 
 static std::string cfg(const std::string& sep) {
-    // recipe "r": ${time}${sep}${boxes}; recipe "box": ${v}
-    return std::string("{\"recipes\":[{\"name\":\"r\",\"template\":\"${time}") + sep +
-           "${boxes}\"},{\"name\":\"box\",\"template\":\"${v}\"}]}";
+    // recipe "r_test": ${time}${sep}${boxes} (boxes is a struct array, fields=["v"])
+    return std::string("{\"recipes\":[{\"name\":\"r_test\",\"template\":\"${time}") + sep +
+           "${boxes}\"}]}";
 }
 }
 
@@ -31,7 +31,7 @@ TEST_CASE("Hot-reload: concurrent render while republishing never crashes") {
     reg.registerStructArray("boxes",
         sv::IndexedNavigator([](const void* p, std::size_t i) -> const void* {
             const HrEv* e = static_cast<const HrEv*>(p); return &e->boxes[i];
-        }), "box", 4, "|");
+        }), {"v"}, 4, "", "|");
     reg.registerProvider("v", sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
         const HrBox* b = static_cast<const HrBox*>(p); char buf[16]; std::snprintf(buf,sizeof(buf),"%d",b->v); return buf;
     }));
@@ -48,7 +48,7 @@ TEST_CASE("Hot-reload: concurrent render while republishing never crashes") {
     for (int t = 0; t < 4; ++t) {
         threads.emplace_back([&]{
             while (!stop.load(std::memory_order_relaxed)) {
-                (void)engine.render("r", &e, ctx);
+                (void)engine.render("r_test", &e, ctx);
                 renders.fetch_add(1, std::memory_order_relaxed);
             }
         });
@@ -61,8 +61,8 @@ TEST_CASE("Hot-reload: concurrent render while republishing never crashes") {
     for (auto& t : threads) t.join();
     CHECK(renders.load() > 0);
     // final render reflects last loaded config. Loop's last iteration i=199 (odd) -> sep="|".
-    // recipe "r" = ${time}|${boxes} -> "99" + "|" + "1|2|3|4" = "99|1|2|3|4"
-    CHECK(engine.render("r", &e, ctx) == "99|1|2|3|4");
+    // recipe "r_test" = ${time}|${boxes} -> "99" + "|" + "1|2|3|4" = "99|1|2|3|4"
+    CHECK(engine.render("r_test", &e, ctx) == "99|1|2|3|4");
 }
 
 TEST_CASE("Hot-reload (Route A): concurrent renderA while republishing never crashes") {
@@ -77,7 +77,7 @@ TEST_CASE("Hot-reload (Route A): concurrent renderA while republishing never cra
     reg.registerStructArray("boxes",
         sv::IndexedNavigator([](const void* p, std::size_t i) -> const void* {
             const HrEv* e = static_cast<const HrEv*>(p); return &e->boxes[i];
-        }), "box", 4, "|");
+        }), {"v"}, 4, "", "|");
     reg.registerProvider("v", sv::makeProvider([](const void* p, const sv::DeviceCtx&) -> std::string {
         const HrBox* b = static_cast<const HrBox*>(p); char buf[16]; std::snprintf(buf,sizeof(buf),"%d",b->v); return buf;
     }));
@@ -94,7 +94,7 @@ TEST_CASE("Hot-reload (Route A): concurrent renderA while republishing never cra
     for (int t = 0; t < 4; ++t) {
         threads.emplace_back([&]{
             while (!stop.load(std::memory_order_relaxed)) {
-                (void)engine.renderA("r", &e, ctx);
+                (void)engine.renderA("r_test", &e, ctx);
                 renders.fetch_add(1, std::memory_order_relaxed);
             }
         });
@@ -106,5 +106,5 @@ TEST_CASE("Hot-reload (Route A): concurrent renderA while republishing never cra
     for (auto& t : threads) t.join();
     CHECK(renders.load() > 0);
     // Parity with Route B: same recipe, same data -> same final output.
-    CHECK(engine.renderA("r", &e, ctx) == "99|1|2|3|4");
+    CHECK(engine.renderA("r_test", &e, ctx) == "99|1|2|3|4");
 }
