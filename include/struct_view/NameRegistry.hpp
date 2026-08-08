@@ -8,49 +8,66 @@
 
 namespace sv {
 
-// Struct-block declaration stored in NameRegistry: navigation + sub-recipe name.
-// Used by Validator (existence/cycle checks) and Builder (to instantiate a
-// recipe-private StructBlockProvider per compiled recipe). The registry does NOT
-// own a bound StructBlockProvider — binding is recipe-private (spec §3.4a Rule 1).
+// Struct-block declaration stored in NameRegistry: navigation + block field
+// expansion order + separator + optional description. Used by Validator
+// (existence/cycle checks) and Builder (to render the block's fields). The
+// registry does NOT own a bound StructBlockProvider — binding is recipe-private
+// (spec §3.4a Rule 1). spec §4.1 StructBlockDecl fields+sep, §3.2 desc storage.
 struct StructBlockDecl {
     Navigator nav;
-    std::string subRecipeName;
+    std::vector<std::string> fieldNames;   // block field expansion order (replaces subRecipeName)
+    std::string sep;                        // separator between block fields
+    std::string desc;                       // optional description (for client display)
 };
 
-// Struct-array declaration: indexed nav + sub-recipe name + count + sep.
-// Same pattern as StructBlockDecl — declaration only, no bound provider here
-// (binding is recipe-private, spec §3.4a Rule 1).
+// Struct-array declaration: indexed nav + per-element field expansion order +
+// count + element-internal field separator + element-between separator + optional
+// description. Same pattern as StructBlockDecl — declaration only, no bound
+// provider here (binding is recipe-private, spec §3.4a Rule 1).
 struct StructArrayDecl {
     IndexedNavigator nav;
-    std::string subRecipeName;
+    std::vector<std::string> fieldNames;   // per-element field expansion order
     std::size_t count;
-    std::string sep;
+    std::string sep;                        // element-internal field separator
+    std::string arraySep;                   // element-between separator
+    std::string desc;
 };
 
 class NameRegistry {
     // Scalar fields / device getters (codegen emits makeProvider lambdas).
     std::unordered_map<std::string, std::unique_ptr<ValueProvider>> entries_;
-    // Struct-block declarations (nav + subRecipe name); no bound providers here.
+    // Struct-block declarations (nav + fieldNames + sep + desc); no bound providers here.
     std::vector<std::pair<std::string, StructBlockDecl>> structDecls_;
-    // Struct-array declarations (indexed nav + subRecipe + count + sep).
+    // Struct-array declarations (indexed nav + fieldNames + count + sep + arraySep + desc).
     std::vector<std::pair<std::string, StructArrayDecl>> structArrayDecls_;
+    // name → desc for all registered things (fields/blocks/devices). spec §3.2.
+    std::unordered_map<std::string, std::string> descs_;
 public:
     // For fields and device getters (codegen emits makeProvider lambdas).
-    void registerProvider(std::string name, std::unique_ptr<ValueProvider> vp);
-    // For key struct blocks: declare navigator + sub-recipe name (resolved per
-    // recipe by Builder, not stored bound here).
-    void registerStruct(std::string name, Navigator nav, std::string subRecipeName);
+    // desc is optional (default empty for backward compat). spec §8.1.
+    void registerProvider(std::string name, std::unique_ptr<ValueProvider> vp, std::string desc = "");
+    // For key struct blocks: declare navigator + block field expansion order +
+    // separator + optional desc (resolved per recipe by Builder, not stored bound
+    // here). spec §4.1 StructBlockDecl fields+sep, §8.1 register signatures.
+    void registerStruct(std::string name, Navigator nav,
+                        std::vector<std::string> fieldNames, std::string sep, std::string desc = "");
 
     // Scalar fields / device getters only (struct blocks are NOT in entries_).
     const ValueProvider* lookup(const std::string& name) const;
+
+    // Returns the desc registered for `name`, or an empty string if none. spec §3.2.
+    const std::string& describe(const std::string& name) const;
 
     // For Validator (existence/cycle checks) and Builder (instantiate per-recipe
     // StructBlockProviders).
     const std::vector<std::pair<std::string, StructBlockDecl>>& structDecls() const;
 
     // For struct arrays (codegen emits registerStructArray). Declaration only.
+    // sep = element-internal field separator; arraySep = element-between separator.
+    // spec §8.1 register signatures.
     void registerStructArray(std::string name, IndexedNavigator nav,
-                             std::string subRecipeName, std::size_t count, std::string sep);
+                             std::vector<std::string> fieldNames, std::size_t count,
+                             std::string sep, std::string arraySep, std::string desc = "");
     // For Validator (existence/cycle) and Builder (instantiate per-recipe
     // ArrayStructBlockProviders).
     const std::vector<std::pair<std::string, StructArrayDecl>>& structArrayDecls() const;

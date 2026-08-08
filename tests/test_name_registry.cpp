@@ -1,4 +1,6 @@
 #include <doctest/doctest.h>
+#include <string>
+#include <vector>
 #include <struct_view/NameRegistry.hpp>
 #include <struct_view/ValueProvider.hpp>
 #include <struct_view/Recipe.hpp>
@@ -20,13 +22,14 @@ TEST_CASE("NameRegistry: registerProvider + lookup") {
     CHECK(vp->get(&e, dummy) == "42");
 }
 
-TEST_CASE("NameRegistry: registerStruct stores name + subRecipe name") {
+TEST_CASE("NameRegistry: registerStruct stores name in decls") {
     sv::NameRegistry reg;
-    reg.registerStruct("person", sv::Navigator([](const void*) -> const void* { return nullptr; }), "person");
+    reg.registerStruct("person",
+        sv::Navigator([](const void*) -> const void* { return nullptr; }),
+        {"name"}, "-", "");
     auto decls = reg.structDecls();
     REQUIRE(decls.size() == 1);
     CHECK(decls[0].first == "person");
-    CHECK(decls[0].second.subRecipeName == "person");
 }
 
 TEST_CASE("NameRegistry: unknown lookup returns nullptr") {
@@ -38,19 +41,46 @@ TEST_CASE("NameRegistry: registerStructArray stores decl") {
     sv::NameRegistry reg;
     reg.registerStructArray("boxes",
         sv::IndexedNavigator([](const void*, std::size_t) -> const void* { return nullptr; }),
-        "box", 4, "|");
+        {"w", "h"}, 4, ",", "|", "");
     auto decls = reg.structArrayDecls();
     REQUIRE(decls.size() == 1);
     CHECK(decls[0].first == "boxes");
-    CHECK(decls[0].second.subRecipeName == "box");
+    CHECK(decls[0].second.fieldNames == std::vector<std::string>{"w", "h"});
     CHECK(decls[0].second.count == 4);
-    CHECK(decls[0].second.sep == "|");
+    CHECK(decls[0].second.sep == ",");
+    CHECK(decls[0].second.arraySep == "|");
 }
 
 TEST_CASE("NameRegistry: struct array not in lookup (only scalars/devices)") {
     sv::NameRegistry reg;
     reg.registerStructArray("boxes",
         sv::IndexedNavigator([](const void*, std::size_t) -> const void* { return nullptr; }),
-        "box", 4, "|");
+        {"w", "h"}, 4, ",", "|", "");
     CHECK(reg.lookup("boxes") == nullptr);   // struct arrays are NOT in entries_
+}
+
+TEST_CASE("NameRegistry: registerStruct stores fields+sep+desc (no subRecipe)") {
+    sv::NameRegistry reg;
+    reg.registerStruct("person",
+        sv::Navigator([](const void*) -> const void* { return nullptr; }),
+        {"name", "age"}, "-", "人体信息");
+    auto decls = reg.structDecls();
+    REQUIRE(decls.size() == 1);
+    CHECK(decls[0].first == "person");
+    CHECK(decls[0].second.fieldNames == std::vector<std::string>{"name", "age"});
+    CHECK(decls[0].second.sep == "-");
+    CHECK(decls[0].second.desc == "人体信息");
+}
+
+TEST_CASE("NameRegistry: registerProvider stores desc; describe() returns it") {
+    sv::NameRegistry reg;
+    reg.registerProvider("x", sv::makeProvider([](const void*, const sv::DeviceCtx&){return std::string("1");}), "横坐标");
+    CHECK(reg.describe("x") == "横坐标");
+    CHECK(reg.describe("nope").empty());
+}
+
+TEST_CASE("NameRegistry: registerProvider desc defaults to empty (backward compat)") {
+    sv::NameRegistry reg;
+    reg.registerProvider("y", sv::makeProvider([](const void*, const sv::DeviceCtx&){return std::string("2");}));
+    CHECK(reg.describe("y").empty());
 }
