@@ -1,0 +1,56 @@
+@startuml
+!theme plain
+title 完整流程: 注册 → 配置 → 渲染
+
+actor 维护者 as Dev
+actor Client as Cli
+participant "gen_schema.py" as GS
+participant "gen_registry.py" as GR
+participant "NameRegistry" as Reg
+participant "ConnectorLib" as Lib
+participant "Engine" as Eng
+participant "ConfigLoader" as CL
+participant "Validator" as Val
+participant "Builder" as Bld
+participant "RecipeStore" as RS
+
+== 启动期: 注册 ==
+
+Dev -> GS: event.h
+GS --> Dev: schema.json (初始骨架)
+Dev -> Dev: 补充 desc/sep/fields
+Dev -> GR: schema.json
+GR --> Dev: registry_gen.cpp
+Dev -> Reg: registerStructViewNames(reg)
+Dev -> Lib: add("dash","-")
+
+== 运行期: 配置下发 ==
+
+Cli -> Eng: loadConfig(recipeJson)
+Eng -> CL: parse(jsonText)
+CL --> Eng: ConfigAst
+Eng -> Val: validate(ast, reg, lib)
+Val --> Eng: errors[] (空=OK)
+Eng -> Bld: compile(ast, reg, lib)
+Bld -> Reg: findStructBlockDecl/findScalarArrayDecl/...
+Reg --> Bld: decls
+Bld --> Eng: Result {recipes map}
+Eng -> RS: publishAll(recipes)
+Eng --> Cli: LoadResult {ok:true}
+
+== 运行期: 渲染 ==
+
+Cli -> Eng: render("r_alarm_line", &event, ctx)
+Eng -> RS: snapshot("r_alarm_line")
+RS --> Eng: shared_ptr<RecipeB>
+Eng -> Eng: runRecipeB(recipe, &event, ctx)
+Eng --> Cli: "CAM001:1717171717|Alice-30@..."
+
+== 运行期: 热加载 ==
+
+Cli -> Eng: loadConfig(newRecipeJson)
+Eng -> RS: publishAll(newRecipes)
+note right: 原子替换,旧配方 RCU 保活
+Eng --> Cli: LoadResult {ok:true}
+
+@enduml

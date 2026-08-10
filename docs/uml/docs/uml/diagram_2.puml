@@ -1,0 +1,60 @@
+@startuml
+!theme plain
+title 配置流程: loadConfig (parse → validate → compile → publish)
+
+participant "Client / UI" as Client
+participant "Engine" as Eng
+participant "ConfigLoader" as Loader
+participant "Validator" as Val
+participant "Builder" as Bld
+participant "NameRegistry" as Reg
+participant "RecipeStore" as Store
+
+Client -> Eng: loadConfig(recipeJson)
+Eng -> Loader: parse(jsonText)
+Loader --> Eng: ConfigAst {recipes: [{name, desc, segments}]}
+
+note over Loader
+  分词器解析 ${name:sep=xxx:isep=yyy}
+  → Segment{isRef, text, sepOverride, isepOverride}
+end note
+
+Eng -> Val: validate(ast, names, connectors)
+Val -> Reg: lookup / isStructBlock / isStructArray / isScalarArray
+Reg --> Val: name 是否存在 + 类型
+Val -> Val: 校验 r_ 前缀 + block fields 存在性 + sep/isep 合法性 + 用户子配方循环
+Val --> Eng: errors[] (空=通过)
+
+Eng -> Bld: compile(ast, names, connectors)
+Bld -> Reg: findStructBlockDecl / findStructArrayDecl / findScalarArrayDecl
+Reg --> Bld: decl (nav + fields + sep + count + ...)
+
+note over Bld
+  Pass 1: 编译每个 recipe → StepB{provider}
+    - 标量字段 → names.lookup(vp)
+    - 标量数组 → pendingScalar
+    - 结构体块 → pending
+    - 结构体数组 → pendingArray
+    - 连接符 → ConnectorProvider
+    - 用户子配方 → pendingSub
+
+  Pass 2: 结构体块 → StructBlockProvider(nav, fields, sep)
+  Pass 2b: 结构体数组 → ArrayStructBlockProvider(nav, fields, count, sep, arraySep)
+  Pass 2c: 标量数组 → ScalarArrayProvider(elemFn, count, sep)
+  Pass 2d: 用户子配方 → SubRecipeProvider(subRecipe)
+
+  sep/isep 覆盖: 用 seg.sepOverride / seg.isepOverride 替代 decl 默认值
+end note
+
+Bld --> Eng: Result {recipes: map<name, shared_ptr<RecipeB>>}
+
+Eng -> Store: publishAll(recipes)
+note over Store
+  原子换 map (一把写锁)
+  旧配方靠 shared_ptr 引用计数保活
+  → RCU: 在途 render 不被打断
+end note
+
+Eng --> Client: LoadResult {ok, errors}
+
+@enduml

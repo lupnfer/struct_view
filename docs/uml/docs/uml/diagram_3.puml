@@ -1,0 +1,54 @@
+@startuml
+!theme plain
+title 渲染热路径: render(recipeName, structPtr, ctx)
+
+participant "调用方" as Caller
+participant "Engine" as Eng
+participant "RecipeStore" as Store
+participant "runRecipeB" as Run
+participant "StepB.provider" as Prov
+
+Caller -> Eng: render("r_alarm_line", &event, ctx)
+Eng -> Store: snapshot("r_alarm_line")
+Store --> Eng: shared_ptr<const RecipeB> (RCU 快照)
+
+Eng -> Run: runRecipeB(recipe, structPtr, ctx)
+
+loop 每个 StepB
+  Run -> Prov: provider->get(structPtr, ctx)
+
+  alt 标量字段 (LambdaProvider)
+    Prov -> Prov: snprintf / std::string(cstr)
+    Prov --> Run: "1717171717"
+  else 连接符 (ConnectorProvider)
+    Prov --> Run: ":" / "|" / "@"
+  else 结构体块 (StructBlockProvider)
+    Prov -> Prov: nav.navigate(structPtr) → child
+    loop fields[]
+      Prov -> Prov: fieldProvider->get(child, ctx)
+    end
+    Prov --> Run: "Alice-30"
+  else 标量数组 (ScalarArrayProvider)
+    loop count
+      Prov -> Prov: elemFn(structPtr, i)
+    end
+    Prov --> Run: "11-22-33-0-0-0-0-0"
+  else 结构体数组 (ArrayStructBlockProvider)
+    loop count
+      Prov -> Prov: nav.navigate(structPtr, i) → child
+      loop fields[]
+        Prov -> Prov: fieldProvider->get(child, ctx)
+      end
+    end
+    Prov --> Run: "100,200,300,400,1-2|..."
+  else 用户子配方 (SubRecipeProvider)
+    Prov -> Run: runRecipeB(*sub_, structPtr, ctx) (递归)
+    Run --> Prov: 子配方输出
+    Prov --> Run: 子配方输出
+  end
+end
+
+Run --> Eng: "CAM001:1717171717|Alice-30@..."
+Eng --> Caller: 返回字符串
+
+@enduml

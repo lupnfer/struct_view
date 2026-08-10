@@ -1,0 +1,39 @@
+@startuml
+!theme plain
+title 注册流程: schema.json → codegen → NameRegistry
+
+participant "维护者" as Dev
+participant "gen_schema.py" as GenSch
+participant "gen_registry.py" as GenReg
+participant "registry_gen.cpp" as RegCpp
+participant "NameRegistry" as Reg
+participant "ConnectorLib" as Lib
+
+Dev -> GenSch: event.h
+GenSch -> GenSch: 正则解析 typedef struct
+GenSch --> Dev: schema.json (初始骨架, type/ptr/array 自动推导)
+
+Dev -> Dev: 补充 desc / sep / fields / deviceCtxType
+
+Dev -> GenReg: schema.json
+GenReg -> GenReg: validate_member() 校验
+GenReg -> GenReg: 生成 register* 调用
+GenReg --> Dev: registry_gen.cpp
+
+Dev -> RegCpp: #include (编译期)
+RegCpp -> RegCpp: static_assert(extent_v >= count) 漂移检查
+RegCpp --> Reg: registerStructViewNames(reg)
+
+note over Reg
+  NameRegistry 内部存储:
+  - entries_: name → ValueProvider (标量字段/设备)
+  - structDecls_: name → StructBlockDecl (nav + fields + sep + desc)
+  - structArrayDecls_: name → StructArrayDecl (nav + fields + count + sep + arraySep)
+  - scalarArrayDecls_: name → ScalarArrayDecl (elemFn + count + sep)
+  - descs_: name → desc (描述,给 UI 显示)
+end note
+
+Dev -> Lib: add("dash", "-")
+Dev -> Lib: add("pipe", "|")
+
+@enduml
