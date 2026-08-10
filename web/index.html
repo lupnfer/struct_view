@@ -112,8 +112,7 @@ function renderNameList() {
   }
 }
 
-function allowDrop(e) { e.preventDefault(); }
-function drop(e) { e.preventDefault(); const name = e.dataTransfer.getData('name'); if (name) addToken('ref', name); }
+// Sidebar name drag → compose area drop is handled by onComposeDrop above.
 
 function addToken(type, text) {
   if (!recipes[activeRecipe]) recipes[activeRecipe] = [];
@@ -125,36 +124,79 @@ function addToken(type, text) {
 function renderCompose() {
   const el = document.getElementById('compose');
   el.innerHTML = '';
-  el.ondrop = drop; el.ondragover = allowDrop;
+  el.ondrop = onComposeDrop; el.ondragover = onComposeDragOver;
   const tokens = recipes[activeRecipe] || [];
   tokens.forEach((t, i) => {
+    let node;
     if (t.type === 'ref') {
-      const span = document.createElement('span');
-      span.className = 'token token-ref';
+      node = document.createElement('span');
+      node.className = 'token token-ref';
       let label = '${' + t.text;
       if (t.sep) label += ':sep=' + t.sep;
       if (t.isep) label += ':isep=' + t.isep;
       label += '}';
-      span.textContent = label;
-      span.onclick = () => openSepModal(i);
-      span.title = '点击设置分隔符; 右键删除';
-      span.oncontextmenu = (e) => { e.preventDefault(); recipes[activeRecipe].splice(i,1); renderCompose(); updateTemplate(); doPreview(); };
-      el.appendChild(span);
+      node.textContent = label;
+      node.onclick = () => openSepModal(i);
+      node.title = '点击设置分隔符; 右键删除; 拖拽排序';
+      node.oncontextmenu = (e) => { e.preventDefault(); recipes[activeRecipe].splice(i,1); renderCompose(); updateTemplate(); doPreview(); };
     } else {
-      const inp = document.createElement('input');
-      inp.className = 'token token-lit';
-      inp.value = t.text;
-      inp.size = Math.max(1, t.text.length);
-      inp.oninput = () => { recipes[activeRecipe][i].text = inp.value; inp.size = Math.max(1, inp.value.length||1); updateTemplate(); doPreview(); };
-      inp.oncontextmenu = (e) => { e.preventDefault(); recipes[activeRecipe].splice(i,1); renderCompose(); updateTemplate(); doPreview(); };
-      el.appendChild(inp);
+      node = document.createElement('input');
+      node.className = 'token token-lit';
+      node.value = t.text;
+      node.size = Math.max(1, t.text.length);
+      node.oninput = () => { recipes[activeRecipe][i].text = node.value; node.size = Math.max(1, node.value.length||1); updateTemplate(); doPreview(); };
+      node.oncontextmenu = (e) => { e.preventDefault(); recipes[activeRecipe].splice(i,1); renderCompose(); updateTemplate(); doPreview(); };
     }
+    // Make every token draggable for reordering
+    node.draggable = true;
+    node.dataset.dragIdx = i;
+    node.ondragstart = (e) => {
+      e.dataTransfer.setData('text/reorder', i);
+      e.dataTransfer.effectAllowed = 'move';
+      node.style.opacity = '0.5';
+    };
+    node.ondragend = () => { node.style.opacity = '1'; };
+    node.ondragover = (e) => { e.preventDefault(); e.stopPropagation(); node.style.borderStyle = 'solid'; node.style.borderColor = '#ff6f00'; };
+    node.ondragleave = () => { node.style.borderStyle = ''; node.style.borderColor = ''; };
+    node.ondrop = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      node.style.borderStyle = ''; node.style.borderColor = '';
+      const fromIdx = parseInt(e.dataTransfer.getData('text/reorder'));
+      if (!isNaN(fromIdx) && fromIdx !== i) {
+        // Reorder: move token from fromIdx to position i
+        const arr = recipes[activeRecipe];
+        const moved = arr.splice(fromIdx, 1)[0];
+        arr.splice(i, 0, moved);
+        renderCompose(); updateTemplate(); doPreview();
+      }
+    };
+    el.appendChild(node);
   });
   const end = document.createElement('input');
   end.className = 'token token-lit'; end.value=''; end.size=3; end.placeholder='连接符';
   end.oninput = () => { if (end.value) { addToken('lit', end.value); end.value=''; } };
   el.appendChild(end);
 }
+
+// Compose-area drop handler: handles both name-drop (from sidebar) and reorder-drop
+function onComposeDrop(e) {
+  e.preventDefault();
+  const name = e.dataTransfer.getData('name');
+  if (name) { addToken('ref', name); return; }
+  // If no name data, check if it's a reorder drop onto empty area (append to end)
+  const reorderIdx = e.dataTransfer.getData('text/reorder');
+  if (reorderIdx !== '') {
+    // Drops on empty compose area = move to end
+    const fromIdx = parseInt(reorderIdx);
+    if (!isNaN(fromIdx)) {
+      const arr = recipes[activeRecipe];
+      const moved = arr.splice(fromIdx, 1)[0];
+      arr.push(moved);
+      renderCompose(); updateTemplate(); doPreview();
+    }
+  }
+}
+function onComposeDragOver(e) { e.preventDefault(); }
 
 function updateTemplate() {
   const tokens = recipes[activeRecipe] || [];
