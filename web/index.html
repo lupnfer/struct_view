@@ -211,6 +211,9 @@ function openSepModal(idx) {
   editingSepFor = idx;
   const t = recipes[activeRecipe][idx];
   const nameInfo = allNames.find(n => n.name === t.text);
+  // Only show sep modal for separable names (arrays/blocks). Scalar fields/devices
+  // don't support :sep= override — clicking them does nothing (avoids invalid override).
+  if (!nameInfo || !nameInfo.canSep) return;
   document.getElementById('sep-input').value = t.sep || '';
   const isepLabel = document.getElementById('isep-label');
   const isepInput = document.getElementById('isep-input');
