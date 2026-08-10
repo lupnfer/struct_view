@@ -4,6 +4,15 @@
 
 namespace sv {
 
+std::string ScalarArrayProvider::get(const void* structPtr, const DeviceCtx& ctx) const {
+    std::string out;
+    for (std::size_t i = 0; i < count_; ++i) {
+        if (i) out += sep_;
+        out += elemFn_(structPtr, i);
+    }
+    return out;
+}
+
 std::string SubRecipeProvider::get(const void* structPtr, const DeviceCtx& ctx) const {
     return runRecipeB(*sub_, structPtr, ctx);
 }

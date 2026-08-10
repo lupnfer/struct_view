@@ -74,13 +74,13 @@ ARRAY_SCHEMA = {
     ]
 }
 
-def test_emits_scalar_array_loop_and_static_assert():
+def test_emits_scalar_array_via_register_scalar_array():
     out = run_gen(json.dumps(ARRAY_SCHEMA), tempfile.mktemp() + ".cpp")
-    assert 'registerProvider("feat_ids"' in out
-    assert 'for (std::size_t i = 0; i < 8; ++i)' in out
-    assert 'if (i) out += "-";' in out
+    assert 'registerScalarArray("feat_ids"' in out
     assert 'std::extent_v<decltype(s->feature_ids)> >= 8' in out
     assert '(int)s->feature_ids[i]' in out
+    # sep NOT baked into a loop — it's a runtime arg to ScalarArrayProvider
+    assert 'if (i) out += "-"' not in out
 
 def test_emits_struct_array_register_struct_array_and_static_assert():
     out = run_gen(json.dumps(ARRAY_SCHEMA), tempfile.mktemp() + ".cpp")

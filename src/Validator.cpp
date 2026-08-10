@@ -61,29 +61,43 @@ std::vector<ConfigError> Validator::validate(const ConfigAst& ast,
     }
 
     // 1. each referenced name resolves to a field/device provider, a connector,
-    //    a struct block, a struct array, or a user sub-recipe (byName).
+    //    a struct block, a struct array, a scalar array, or a user sub-recipe (byName).
     for (const auto& r : ast.recipes) {
         for (const auto& seg : r.segments) {
             if (!seg.isRef) continue;
             if (!names.lookup(seg.text) && !connectors.get(seg.text)
                 && !names.isStructBlock(seg.text) && !names.isStructArray(seg.text)
-                && !byName.count(seg.text)) {
+                && !names.isScalarArray(seg.text) && !byName.count(seg.text)) {
                 errs.push_back({r.name, "unknown name: " + seg.text, 0});
             }
         }
     }
 
-    // 2. each struct block's fieldNames must resolve to a registered provider.
+    // 1b. :sep=/:isep= overrides: validate they're on separable names.
+    for (const auto& r : ast.recipes) {
+        for (const auto& seg : r.segments) {
+            if (!seg.isRef) continue;
+            bool isScalarField = names.lookup(seg.text) != nullptr;   // scalar field/device
+            if (!seg.sepOverride.empty() && isScalarField) {
+                errs.push_back({r.name, "sep override on non-separable name: " + seg.text, 0});
+            }
+            if (!seg.isepOverride.empty() && !names.isStructArray(seg.text)) {
+                errs.push_back({r.name, "isep override on non-struct-array name: " + seg.text, 0});
+            }
+        }
+    }
+
+    // 2. each struct block's fieldNames must resolve to a registered provider or scalar array.
     for (const auto& d : names.structDecls()) {
         for (const auto& fn : d.second.fieldNames) {
-            if (!names.lookup(fn)) {
+            if (!names.lookup(fn) && !names.isScalarArray(fn)) {
                 errs.push_back({d.first, "block field not found in registry: " + fn, 0});
             }
         }
     }
     for (const auto& d : names.structArrayDecls()) {
         for (const auto& fn : d.second.fieldNames) {
-            if (!names.lookup(fn)) {
+            if (!names.lookup(fn) && !names.isScalarArray(fn)) {
                 errs.push_back({d.first, "block field not found in registry: " + fn, 0});
             }
         }

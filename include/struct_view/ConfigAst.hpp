@@ -7,6 +7,8 @@ namespace sv {
 struct Segment {
     bool isRef;         // true => text is a name to resolve; false => literal
     std::string text;
+    std::string sepOverride;  // from :sep=xxx, empty = use schema default
+    std::string isepOverride; // from :isep=xxx, empty = use schema default (struct arrays only)
 };
 
 struct RecipeAst {

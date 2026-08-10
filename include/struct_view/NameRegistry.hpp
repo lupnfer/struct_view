@@ -33,6 +33,16 @@ struct StructArrayDecl {
     std::string desc;
 };
 
+// Scalar-array declaration: element formatter + count + default sep + desc.
+// Builder creates recipe-private ScalarArrayProvider per compiled recipe (sep
+// can be overridden via ${name:sep=xxx}, spec §5 of sep-override spec).
+struct ScalarArrayDecl {
+    std::function<std::string(const void*, std::size_t)> elemFn;
+    std::size_t count;
+    std::string sep;     // default sep (fallback when no :sep= override)
+    std::string desc;
+};
+
 class NameRegistry {
     // Scalar fields / device getters (codegen emits makeProvider lambdas).
     std::unordered_map<std::string, std::unique_ptr<ValueProvider>> entries_;
@@ -40,6 +50,8 @@ class NameRegistry {
     std::vector<std::pair<std::string, StructBlockDecl>> structDecls_;
     // Struct-array declarations (indexed nav + fieldNames + count + sep + arraySep + desc).
     std::vector<std::pair<std::string, StructArrayDecl>> structArrayDecls_;
+    // Scalar-array declarations (elemFn + count + default sep + desc).
+    std::vector<std::pair<std::string, ScalarArrayDecl>> scalarArrayDecls_;
     // name → desc for all registered things (fields/blocks/devices). spec §3.2.
     std::unordered_map<std::string, std::string> descs_;
 public:
@@ -72,12 +84,21 @@ public:
     // ArrayStructBlockProviders).
     const std::vector<std::pair<std::string, StructArrayDecl>>& structArrayDecls() const;
 
+    // For scalar arrays (codegen emits registerScalarArray). Declaration only.
+    // Builder creates recipe-private ScalarArrayProvider (sep overridable, spec §5).
+    void registerScalarArray(std::string name,
+                             std::function<std::string(const void*, std::size_t)> elemFn,
+                             std::size_t count, std::string sep, std::string desc = "");
+    const std::vector<std::pair<std::string, ScalarArrayDecl>>& scalarArrayDecls() const;
+
     // --- Lookups (single source of truth; used by Validator + Builder/BuilderA
     //     to avoid duplicating these helpers across 3 files). ---
     bool isStructBlock(const std::string& name) const;   // is `name` a declared struct block?
     bool isStructArray(const std::string& name) const;   // is `name` a declared struct array?
+    bool isScalarArray(const std::string& name) const;   // is `name` a declared scalar array?
     const StructBlockDecl* findStructBlockDecl(const std::string& name) const;  // nullptr if absent
     const StructArrayDecl* findStructArrayDecl(const std::string& name) const;  // nullptr if absent
+    const ScalarArrayDecl* findScalarArrayDecl(const std::string& name) const;  // nullptr if absent
 };
 
 } // namespace sv
