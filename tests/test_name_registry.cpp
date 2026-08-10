@@ -84,3 +84,37 @@ TEST_CASE("NameRegistry: registerProvider desc defaults to empty (backward compa
     reg.registerProvider("y", sv::makeProvider([](const void*, const sv::DeviceCtx&){return std::string("2");}));
     CHECK(reg.describe("y").empty());
 }
+
+TEST_CASE("NameRegistry: exportNames returns all name types with metadata") {
+    sv::NameRegistry reg;
+    reg.registerProvider("time", sv::makeProvider([](const void*, const sv::DeviceCtx&){return std::string("1");}), "时间戳");
+    reg.registerStruct("person", sv::Navigator([](const void*)->const void*{return nullptr;}),
+        {"name", "age"}, "-", "人体信息");
+    reg.registerStructArray("boxes",
+        sv::IndexedNavigator([](const void*, std::size_t)->const void*{return nullptr;}),
+        {"x"}, 4, ",", "|", "检测框数组");
+    reg.registerScalarArray("ids",
+        [](const void*, std::size_t){return std::string("1");}, 8, "-", "特征ID");
+
+    auto names = reg.exportNames();
+    REQUIRE(names.size() >= 4);
+    bool hasField=false, hasBlock=false, hasStructArray=false, hasScalarArray=false;
+    for (auto& n : names) {
+        if (n.name == "time" && n.type == "field") hasField = true;
+        if (n.name == "person" && n.type == "struct_block") hasBlock = true;
+        if (n.name == "boxes" && n.type == "struct_array") hasStructArray = true;
+        if (n.name == "ids" && n.type == "scalar_array") hasScalarArray = true;
+    }
+    CHECK(hasField);
+    CHECK(hasBlock);
+    CHECK(hasStructArray);
+    CHECK(hasScalarArray);
+    for (auto& n : names) {
+        if (n.name == "boxes") {
+            CHECK(n.canSep);
+            CHECK(n.canIsep);
+            CHECK(n.defaultSep == "|");
+            CHECK(n.defaultIsep == ",");
+        }
+    }
+}

@@ -65,4 +65,44 @@ const ScalarArrayDecl* NameRegistry::findScalarArrayDecl(const std::string& name
     for (const auto& d : scalarArrayDecls_) if (d.first == name) return &d.second;
     return nullptr;
 }
+std::vector<NameInfo> NameRegistry::exportNames() const {
+    std::vector<NameInfo> out;
+    for (const auto& [name, _] : entries_) {
+        NameInfo info;
+        info.name = name;
+        info.type = "field";
+        info.desc = describe(name);
+        out.push_back(std::move(info));
+    }
+    for (const auto& [name, decl] : structDecls_) {
+        NameInfo info;
+        info.name = name;
+        info.type = "struct_block";
+        info.desc = decl.desc;
+        info.canSep = true;
+        info.defaultSep = decl.sep;
+        out.push_back(std::move(info));
+    }
+    for (const auto& [name, decl] : structArrayDecls_) {
+        NameInfo info;
+        info.name = name;
+        info.type = "struct_array";
+        info.desc = decl.desc;
+        info.canSep = true;
+        info.canIsep = true;
+        info.defaultSep = decl.arraySep;
+        info.defaultIsep = decl.sep;
+        out.push_back(std::move(info));
+    }
+    for (const auto& [name, decl] : scalarArrayDecls_) {
+        NameInfo info;
+        info.name = name;
+        info.type = "scalar_array";
+        info.desc = decl.desc;
+        info.canSep = true;
+        info.defaultSep = decl.sep;
+        out.push_back(std::move(info));
+    }
+    return out;
+}
 } // namespace sv

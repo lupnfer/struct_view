@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>struct_view Recipe Builder</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: sans-serif; display: flex; height: 100vh; }
+#sidebar { width: 280px; border-right: 1px solid #ccc; overflow-y: auto; padding: 10px; }
+#sidebar h3 { margin: 10px 0 5px; font-size: 14px; color: #666; }
+.name-item { padding: 6px 8px; margin: 2px 0; border: 1px solid #ddd; border-radius: 4px; cursor: grab; background: #f9f9f9; }
+.name-item:hover { background: #e8f0fe; }
+.name-item .desc { font-size: 12px; color: #888; }
+.type-badge { font-size: 10px; padding: 1px 4px; border-radius: 3px; color: #fff; margin-right: 4px; }
+.type-field { background: #4CAF50; } .type-scalar_array { background: #FF9800; }
+.type-struct_block { background: #2196F3; } .type-struct_array { background: #9C27B0; }
+.type-device { background: #607D8B; } .type-connector { background: #795548; }
+#main { flex: 1; display: flex; flex-direction: column; padding: 10px; overflow-y: auto; }
+#tabs { display: flex; gap: 5px; margin-bottom: 10px; flex-wrap: wrap; }
+.tab { padding: 5px 12px; border: 1px solid #ccc; border-radius: 4px 4px 0 0; cursor: pointer; background: #eee; font-size: 13px; }
+.tab.active { background: #fff; border-bottom: 2px solid #4285f4; }
+#compose { border: 1px solid #ccc; border-radius: 4px; padding: 10px; min-height: 80px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; background: #fafafa; }
+.token { display: inline-block; padding: 4px 8px; border-radius: 4px; margin: 2px; font-size: 14px; }
+.token-ref { background: #e8f0fe; border: 1px solid #4285f4; cursor: pointer; color: #1a73e8; }
+.token-ref:hover { background: #d0e0ff; }
+.token-lit { background: #fff; border: 1px dashed #aaa; min-width: 20px; text-align: center; font-family: monospace; }
+.token-lit:focus { background: #fffacd; outline: none; }
+#template { font-family: monospace; background: #f5f5f5; padding: 8px; margin: 10px 0; border-radius: 4px; font-size: 13px; word-break: break-all; }
+#preview { font-family: monospace; background: #e8f5e9; padding: 8px; margin: 10px 0; border-radius: 4px; font-size: 13px; word-break: break-all; min-height: 20px; }
+#actions { display: flex; gap: 10px; margin-top: 10px; align-items: center; }
+button { padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+#btn-preview { background: #4CAF50; color: #fff; }
+#btn-deploy { background: #2196F3; color: #fff; }
+#btn-json { background: #666; color: #fff; }
+#btn-newsub { background: #FF9800; color: #fff; }
+#error-bar { color: #d32f2f; padding: 8px; background: #ffebee; border-radius: 4px; margin: 10px 0; display: none; font-size: 13px; }
+#sep-modal { position: fixed; top: 30%; left: 35%; background: #fff; border: 1px solid #ccc; border-radius: 8px; padding: 20px; display: none; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+#sep-modal h4 { margin-bottom: 10px; }
+#sep-modal label { display: block; margin: 8px 0; }
+#sep-modal input { padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 60px; }
+#json-view { width: 100%; height: 200px; font-family: monospace; font-size: 13px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; display: none; margin-top: 10px; }
+#recipe-name-input { display: none; padding: 4px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+#recipe-desc-input { display: none; padding: 4px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; margin-left: 5px; width: 150px; }
+</style>
+</head>
+<body>
+<div id="sidebar">
+  <h3>可用 Name</h3>
+  <div id="name-list"><p style="color:#999;font-size:12px">加载中...</p></div>
+</div>
+<div id="main">
+  <div id="tabs">
+    <div class="tab active" data-recipe="r_alarm_line" onclick="switchTab(this)">r_alarm_line</div>
+    <div class="tab" data-recipe="+new" onclick="newSubRecipe()" style="color:#4285f4">+ 新子配方</div>
+  </div>
+  <div id="recipe-meta" style="display:none;margin-bottom:10px">
+    <input id="recipe-name-input" placeholder="r_配方名" oninput="updateRecipeName(this.value)">
+    <input id="recipe-desc-input" placeholder="描述" oninput="updateRecipeDesc(this.value)">
+  </div>
+  <div id="compose"></div>
+  <div id="template">template: (空)</div>
+  <div id="preview">预览: (空)</div>
+  <div id="error-bar"></div>
+  <div id="actions">
+    <button id="btn-preview" onclick="doPreview()">🔍 预览</button>
+    <button id="btn-deploy" onclick="doDeploy()">🚀 部署</button>
+    <button id="btn-json" onclick="toggleJson()">📄 JSON</button>
+  </div>
+  <textarea id="json-view" oninput="applyJson()" placeholder='{"recipes":[...]}'></textarea>
+</div>
+<div id="sep-modal">
+  <h4>分隔符设置</h4>
+  <label>sep (主分隔符): <input type="text" id="sep-input" size="5"></label>
+  <label id="isep-label" style="display:none">isep (内部分隔符): <input type="text" id="isep-input" size="5"></label>
+  <div style="margin-top:10px">
+    <button onclick="applySep()" style="background:#4CAF50;color:#fff">确定</button>
+    <button onclick="closeSepModal()" style="background:#999;color:#fff">取消</button>
+    <button onclick="clearSep()" style="background:#f44336;color:#fff;margin-left:10px">清除覆盖</button>
+  </div>
+</div>
+
+<script>
+let allNames = [];
+let recipes = {};
+let activeRecipe = 'r_alarm_line';
+let editingSepFor = -1;
+
+fetch('/api/names').then(r=>r.json()).then(data => {
+  allNames = data.names || [];
+  renderNameList();
+  if (!recipes[activeRecipe]) recipes[activeRecipe] = [];
+  renderCompose();
+}).catch(err => {
+  document.getElementById('name-list').innerHTML = '<p style="color:#d32f2f;font-size:12px">加载失败: ' + err + '</p>';
+});
+
+function renderNameList() {
+  const el = document.getElementById('name-list');
+  el.innerHTML = '';
+  const groups = {};
+  for (const n of allNames) { if (!groups[n.type]) groups[n.type] = []; groups[n.type].push(n); }
+  const labels = {field:'标量字段',scalar_array:'标量数组',struct_block:'结构体块',struct_array:'结构体数组',device:'设备信息',connector:'连接符'};
+  for (const [type, items] of Object.entries(groups)) {
+    const h = document.createElement('h3'); h.textContent = labels[type]||type; el.appendChild(h);
+    for (const n of items) {
+      const d = document.createElement('div'); d.className='name-item'; d.draggable=true;
+      d.ondragstart = e => e.dataTransfer.setData('name', n.name);
+      d.innerHTML = '<span class="type-badge type-'+n.type+'">'+n.type+'</span>'+n.name+(n.desc?'<div class="desc">'+n.desc+'</div>':'');
+      el.appendChild(d);
+    }
+  }
+}
+
+function allowDrop(e) { e.preventDefault(); }
+function drop(e) { e.preventDefault(); const name = e.dataTransfer.getData('name'); if (name) addToken('ref', name); }
+
+function addToken(type, text) {
+  if (!recipes[activeRecipe]) recipes[activeRecipe] = [];
+  const token = type === 'ref' ? {type:'ref', text, sep:'', isep:''} : {type:'lit', text};
+  recipes[activeRecipe].push(token);
+  renderCompose(); updateTemplate(); doPreview();
+}
+
+function renderCompose() {
+  const el = document.getElementById('compose');
+  el.innerHTML = '';
+  el.ondrop = drop; el.ondragover = allowDrop;
+  const tokens = recipes[activeRecipe] || [];
+  tokens.forEach((t, i) => {
+    if (t.type === 'ref') {
+      const span = document.createElement('span');
+      span.className = 'token token-ref';
+      let label = '${' + t.text;
+      if (t.sep) label += ':sep=' + t.sep;
+      if (t.isep) label += ':isep=' + t.isep;
+      label += '}';
+      span.textContent = label;
+      span.onclick = () => openSepModal(i);
+      span.title = '点击设置分隔符; 右键删除';
+      span.oncontextmenu = (e) => { e.preventDefault(); recipes[activeRecipe].splice(i,1); renderCompose(); updateTemplate(); doPreview(); };
+      el.appendChild(span);
+    } else {
+      const inp = document.createElement('input');
+      inp.className = 'token token-lit';
+      inp.value = t.text;
+      inp.size = Math.max(1, t.text.length);
+      inp.oninput = () => { recipes[activeRecipe][i].text = inp.value; inp.size = Math.max(1, inp.value.length||1); updateTemplate(); doPreview(); };
+      inp.oncontextmenu = (e) => { e.preventDefault(); recipes[activeRecipe].splice(i,1); renderCompose(); updateTemplate(); doPreview(); };
+      el.appendChild(inp);
+    }
+  });
+  const end = document.createElement('input');
+  end.className = 'token token-lit'; end.value=''; end.size=3; end.placeholder='连接符';
+  end.oninput = () => { if (end.value) { addToken('lit', end.value); end.value=''; } };
+  el.appendChild(end);
+}
+
+function updateTemplate() {
+  const tokens = recipes[activeRecipe] || [];
+  const tpl = tokens.map(t => {
+    if (t.type === 'ref') { let s = '${' + t.text; if (t.sep) s += ':sep=' + t.sep; if (t.isep) s += ':isep=' + t.isep; return s + '}'; }
+    return t.text;
+  }).join('');
+  document.getElementById('template').textContent = 'template: ' + tpl;
+}
+
+function openSepModal(idx) {
+  editingSepFor = idx;
+  const t = recipes[activeRecipe][idx];
+  const nameInfo = allNames.find(n => n.name === t.text);
+  document.getElementById('sep-input').value = t.sep || '';
+  const isepLabel = document.getElementById('isep-label');
+  const isepInput = document.getElementById('isep-input');
+  if (nameInfo && nameInfo.canIsep) { isepLabel.style.display = 'block'; isepInput.value = t.isep || ''; }
+  else { isepLabel.style.display = 'none'; }
+  document.getElementById('sep-modal').style.display = 'block';
+}
+function closeSepModal() { document.getElementById('sep-modal').style.display = 'none'; }
+function applySep() {
+  if (editingSepFor >= 0) {
+    recipes[activeRecipe][editingSepFor].sep = document.getElementById('sep-input').value;
+    const isepInput = document.getElementById('isep-input');
+    if (isepInput.parentElement.style.display !== 'none')
+      recipes[activeRecipe][editingSepFor].isep = isepInput.value;
+  }
+  closeSepModal(); renderCompose(); updateTemplate(); doPreview();
+}
+function clearSep() {
+  if (editingSepFor >= 0) { recipes[activeRecipe][editingSepFor].sep = ''; recipes[activeRecipe][editingSepFor].isep = ''; }
+  closeSepModal(); renderCompose(); updateTemplate(); doPreview();
+}
+
+let previewTimer = null;
+function doPreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => {
+    const tpl = buildTemplate(activeRecipe);
+    const body = JSON.stringify({recipes:[{name:activeRecipe,template:tpl}],recipeName:activeRecipe});
+    fetch('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},body})
+      .then(r=>r.json()).then(data=>{
+        const el=document.getElementById('preview');
+        const errBar=document.getElementById('error-bar');
+        if(data.ok){el.textContent='预览: '+data.output;errBar.style.display='none';}
+        else{el.textContent='预览: (错误)';errBar.style.display='block';
+          errBar.textContent='❌ '+data.errors.map(e=>'['+e.recipe+'] '+e.message).join('; ');}
+      }).catch(e=>{document.getElementById('preview').textContent='预览: (连接失败)';});
+  }, 300);
+}
+
+function doDeploy() {
+  const recipeArr = Object.entries(recipes).map(([name,tokens]) => ({name, template: buildTemplate(name)}));
+  fetch('/api/deploy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({recipes:recipeArr})})
+    .then(r=>r.json()).then(data=>{
+      const errBar=document.getElementById('error-bar');
+      if(data.ok){errBar.style.display='block';errBar.style.background='#e8f5e9';errBar.style.color='#2e7d32';
+        errBar.textContent='✅ 已部署(热加载生效)';setTimeout(()=>errBar.style.display='none',3000);}
+      else{errBar.style.display='block';errBar.style.background='#ffebee';errBar.style.color='#d32f2f';
+        errBar.textContent='❌ '+data.errors.map(e=>'['+e.recipe+'] '+e.message).join('; ');}
+    }).catch(e=>{alert('部署失败: 连接错误');});
+}
+
+function buildTemplate(name) {
+  return (recipes[name]||[]).map(t=>{
+    if(t.type==='ref'){let s='${'+t.text;if(t.sep)s+=':sep='+t.sep;if(t.isep)s+=':isep='+t.isep;return s+'}';}return t.text;
+  }).join('');
+}
+
+function switchTab(el) {
+  const name = el.dataset.recipe;
+  if (name === '+new') return;
+  activeRecipe = name;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  renderCompose(); updateTemplate(); doPreview();
+}
+
+function newSubRecipe() {
+  const name = 'r_sub' + Object.keys(recipes).length;
+  recipes[name] = [];
+  activeRecipe = name;
+  const tabs = document.getElementById('tabs');
+  const tab = document.createElement('div');
+  tab.className = 'tab active'; tab.dataset.recipe = name;
+  tab.textContent = name; tab.onclick = () => switchTab(tab);
+  tabs.insertBefore(tab, tabs.lastElementChild);
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  tab.classList.add('active');
+  renderCompose(); updateTemplate();
+}
+
+function toggleJson() {
+  const el=document.getElementById('json-view');
+  if(el.style.display==='none'||!el.style.display){
+    const recipeArr=Object.entries(recipes).map(([name,tokens])=>({name,template:buildTemplate(name)}));
+    el.value=JSON.stringify({recipes:recipeArr},null,2);
+    el.style.display='block';
+  } else el.style.display='none';
+}
+
+function applyJson() {
+  try{
+    const data=JSON.parse(document.getElementById('json-view').value);
+    if(data.recipes){ /* simplified: raw edit doesn't restore tokens */ }
+  }catch(e){}
+}
+</script>
+</body>
+</html>

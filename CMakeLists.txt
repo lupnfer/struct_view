@@ -59,3 +59,12 @@ add_executable(bench_routes
     ${SV_SRCS})
 target_include_directories(bench_routes PRIVATE examples/security include third_party)
 target_compile_options(bench_routes PRIVATE -O2)
+
+# --- Recipe Builder UI server ---
+add_executable(recipe_server
+    examples/security/server_main.cpp
+    ${SV_SRCS})
+target_include_directories(recipe_server PRIVATE
+    examples/security include third_party)
+target_compile_options(recipe_server PRIVATE -Wall -Wextra)
+add_dependencies(recipe_server security_codegen)
