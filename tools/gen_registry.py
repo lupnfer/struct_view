@@ -48,10 +48,19 @@ def field_line(struct_name, member):
     fmt = member.get("fmt", DEFAULT_FMT.get(typ, "%d"))
     cast = TYPE_CAST[typ]
     desc = _esc(member.get("desc", ""))
-    return f'''    reg.registerProvider("{as_name}", sv::makeProvider(
+    if typ == "cstr":
+        # cstr: direct std::string construction, no buf, no truncation risk
+        return f'''    reg.registerProvider("{as_name}", sv::makeProvider(
         [](const void* p, const sv::DeviceCtx&) -> std::string {{
             const {struct_name}* s = static_cast<const {struct_name}*>(p);
-            char buf[256];
+            return std::string((const char*)s->{field});
+        }}), "{desc}");\n'''
+    else:
+        # Numeric types: buf[64] is enough for any number (max ~20 chars)
+        return f'''    reg.registerProvider("{as_name}", sv::makeProvider(
+        [](const void* p, const sv::DeviceCtx&) -> std::string {{
+            const {struct_name}* s = static_cast<const {struct_name}*>(p);
+            char buf[64];
             std::snprintf(buf, sizeof(buf), "{fmt}", {cast}s->{field});
             return std::string(buf);
         }}), "{desc}");\n'''
@@ -81,12 +90,23 @@ def field_array_line(struct_name, member):
     cast = TYPE_CAST[typ]
     sep_lit = _esc(sep)
     desc = _esc(member.get("desc", ""))
-    return f'''    reg.registerScalarArray("{as_name}",
+    if typ == "cstr":
+        # cstr array: direct std::string, no buf
+        return f'''    reg.registerScalarArray("{as_name}",
         [](const void* p, std::size_t i) -> std::string {{
             const {struct_name}* s = static_cast<const {struct_name}*>(p);
             static_assert(std::extent_v<decltype(s->{field})> >= {count},
                           "struct_view: {field} length drift (schema count={count})");
-            char buf[256];
+            return std::string((const char*)s->{field}[i]);
+        }}, {count}, "{sep_lit}", "{desc}");\n'''
+    else:
+        # Numeric array: buf[64] per element
+        return f'''    reg.registerScalarArray("{as_name}",
+        [](const void* p, std::size_t i) -> std::string {{
+            const {struct_name}* s = static_cast<const {struct_name}*>(p);
+            static_assert(std::extent_v<decltype(s->{field})> >= {count},
+                          "struct_view: {field} length drift (schema count={count})");
+            char buf[64];
             std::snprintf(buf, sizeof(buf), "{fmt}", {cast}s->{field}[i]);
             return std::string(buf);
         }}, {count}, "{sep_lit}", "{desc}");\n'''
