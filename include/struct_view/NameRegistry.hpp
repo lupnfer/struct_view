@@ -43,6 +43,19 @@ struct ScalarArrayDecl {
     std::string desc;
 };
 
+// Flat name listing for the Recipe Builder UI: every registered name with its
+// type tag + optional description + separator capabilities/defaults so the UI
+// can render a name picker and sep/sep controls. spec §5.1 (exportNames).
+struct NameInfo {
+    std::string name;
+    std::string type;          // "field" | "struct_block" | "struct_array" | "scalar_array"
+    std::string desc;
+    bool canSep = false;       // supports a between-element separator
+    bool canIsep = false;      // supports an element-internal separator (struct arrays only)
+    std::string defaultSep;    // default between-element sep (when canSep)
+    std::string defaultIsep;   // default element-internal sep (when canIsep)
+};
+
 class NameRegistry {
     // Scalar fields / device getters (codegen emits makeProvider lambdas).
     std::unordered_map<std::string, std::unique_ptr<ValueProvider>> entries_;
@@ -99,6 +112,11 @@ public:
     const StructBlockDecl* findStructBlockDecl(const std::string& name) const;  // nullptr if absent
     const StructArrayDecl* findStructArrayDecl(const std::string& name) const;  // nullptr if absent
     const ScalarArrayDecl* findScalarArrayDecl(const std::string& name) const;  // nullptr if absent
+
+    // Flat list of all registered names with type/desc/sep metadata for the
+    // Recipe Builder UI name list (spec §5.1). Order: fields, struct blocks,
+    // struct arrays, scalar arrays.
+    std::vector<NameInfo> exportNames() const;
 };
 
 } // namespace sv
