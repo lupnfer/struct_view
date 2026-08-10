@@ -29,6 +29,14 @@ TYPE_CAST = {
     "cstr":   "(const char*)",
 }
 
+# Default fmt per type — fmt is now optional in schema; if omitted, this default is used.
+DEFAULT_FMT = {
+    "uint64": "%llu",
+    "int":    "%d",
+    "float":  "%f",
+    "cstr":   "%s",
+}
+
 def _esc(s):
     """Escape a string for use inside a C++ string literal."""
     return s.replace('\\', '\\\\').replace('"', '\\"')
@@ -37,7 +45,7 @@ def field_line(struct_name, member):
     field = member["field"]
     as_name = member.get("as", field)
     typ = member["type"]
-    fmt = member["fmt"]
+    fmt = member.get("fmt", DEFAULT_FMT.get(typ, "%d"))
     cast = TYPE_CAST[typ]
     desc = _esc(member.get("desc", ""))
     return f'''    reg.registerProvider("{as_name}", sv::makeProvider(
@@ -66,7 +74,7 @@ def field_array_line(struct_name, member):
     field = member["field"]
     as_name = member.get("as", field)
     typ = member["type"]
-    fmt = member["fmt"]
+    fmt = member.get("fmt", DEFAULT_FMT.get(typ, "%d"))
     arr = member["array"]
     count = arr["count"]
     sep = arr["sep"]
@@ -156,8 +164,7 @@ def validate_member(struct_name, m):
             raise ValueError(
                 f"struct_view schema: struct '{struct_name}' member '{name}' "
                 f"is an array but 'array' is missing required key 'sep'.")
-        if has_field and ("type" not in m or "fmt" not in m):
-            missing = "type" if "type" not in m else "fmt"
+        if has_field and "type" not in m:
             raise ValueError(
                 f"struct_view schema: struct '{struct_name}' scalar-array '{m['field']}' "
                 f"is missing required key '{missing}' (element type/format).")
