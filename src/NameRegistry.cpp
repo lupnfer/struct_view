@@ -48,4 +48,21 @@ const StructArrayDecl* NameRegistry::findStructArrayDecl(const std::string& name
     for (const auto& d : structArrayDecls_) if (d.first == name) return &d.second;
     return nullptr;
 }
+void NameRegistry::registerScalarArray(std::string name,
+                                       std::function<std::string(const void*, std::size_t)> elemFn,
+                                       std::size_t count, std::string sep, std::string desc) {
+    if (!desc.empty()) descs_[name] = desc;
+    ScalarArrayDecl decl{std::move(elemFn), count, std::move(sep), std::move(desc)};
+    scalarArrayDecls_.emplace_back(std::move(name), std::move(decl));
+}
+const std::vector<std::pair<std::string, ScalarArrayDecl>>& NameRegistry::scalarArrayDecls() const {
+    return scalarArrayDecls_;
+}
+bool NameRegistry::isScalarArray(const std::string& name) const {
+    return findScalarArrayDecl(name) != nullptr;
+}
+const ScalarArrayDecl* NameRegistry::findScalarArrayDecl(const std::string& name) const {
+    for (const auto& d : scalarArrayDecls_) if (d.first == name) return &d.second;
+    return nullptr;
+}
 } // namespace sv

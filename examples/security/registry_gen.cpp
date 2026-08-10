@@ -25,20 +25,15 @@ void registerStructViewNames(sv::NameRegistry& reg) {
             const Event* s = static_cast<const Event*>(p);
             return static_cast<const void*>(&s->rect);
         }), {"x", "y", "w", "h", "tags"}, ",", "检测框");
-    reg.registerProvider("feat_ids", sv::makeProvider(
-        [](const void* p, const sv::DeviceCtx&) -> std::string {
+    reg.registerScalarArray("feat_ids",
+        [](const void* p, std::size_t i) -> std::string {
             const Event* s = static_cast<const Event*>(p);
             static_assert(std::extent_v<decltype(s->feature_ids)> >= 8,
                           "struct_view: feature_ids length drift (schema count=8)");
-            std::string out;
             char buf[256];
-            for (std::size_t i = 0; i < 8; ++i) {
-                if (i) out += "-";
-                std::snprintf(buf, sizeof(buf), "%d", (int)s->feature_ids[i]);
-                out += buf;
-            }
-            return out;
-        }), "特征ID列表");
+            std::snprintf(buf, sizeof(buf), "%d", (int)s->feature_ids[i]);
+            return std::string(buf);
+        }, 8, "-", "特征ID列表");
     reg.registerStructArray("boxes", sv::IndexedNavigator(
         [](const void* p, std::size_t i) -> const void* {
             const Event* s = static_cast<const Event*>(p);
@@ -88,20 +83,15 @@ void registerStructViewNames(sv::NameRegistry& reg) {
             std::snprintf(buf, sizeof(buf), "%d", (int)s->h);
             return std::string(buf);
         }), "高");
-    reg.registerProvider("tags", sv::makeProvider(
-        [](const void* p, const sv::DeviceCtx&) -> std::string {
+    reg.registerScalarArray("tags",
+        [](const void* p, std::size_t i) -> std::string {
             const Box* s = static_cast<const Box*>(p);
             static_assert(std::extent_v<decltype(s->tags)> >= 2,
                           "struct_view: tags length drift (schema count=2)");
-            std::string out;
             char buf[256];
-            for (std::size_t i = 0; i < 2; ++i) {
-                if (i) out += "-";
-                std::snprintf(buf, sizeof(buf), "%d", (int)s->tags[i]);
-                out += buf;
-            }
-            return out;
-        }), "标签");
+            std::snprintf(buf, sizeof(buf), "%d", (int)s->tags[i]);
+            return std::string(buf);
+        }, 2, "-", "标签");
     reg.registerProvider("camera", sv::makeProvider(
         [](const void*, const sv::DeviceCtx& base) -> std::string {
             const MyDeviceCtx& ctx = static_cast<const MyDeviceCtx&>(base);

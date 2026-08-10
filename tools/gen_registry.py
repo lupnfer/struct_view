@@ -73,20 +73,15 @@ def field_array_line(struct_name, member):
     cast = TYPE_CAST[typ]
     sep_lit = _esc(sep)
     desc = _esc(member.get("desc", ""))
-    return f'''    reg.registerProvider("{as_name}", sv::makeProvider(
-        [](const void* p, const sv::DeviceCtx&) -> std::string {{
+    return f'''    reg.registerScalarArray("{as_name}",
+        [](const void* p, std::size_t i) -> std::string {{
             const {struct_name}* s = static_cast<const {struct_name}*>(p);
             static_assert(std::extent_v<decltype(s->{field})> >= {count},
                           "struct_view: {field} length drift (schema count={count})");
-            std::string out;
             char buf[256];
-            for (std::size_t i = 0; i < {count}; ++i) {{
-                if (i) out += "{sep_lit}";
-                std::snprintf(buf, sizeof(buf), "{fmt}", {cast}s->{field}[i]);
-                out += buf;
-            }}
-            return out;
-        }}), "{desc}");\n'''
+            std::snprintf(buf, sizeof(buf), "{fmt}", {cast}s->{field}[i]);
+            return std::string(buf);
+        }}, {count}, "{sep_lit}", "{desc}");\n'''
 
 def block_array_line(struct_name, member):
     block = member["block"]

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -48,6 +49,20 @@ class ConnectorProvider : public ValueProvider {
 public:
     explicit ConnectorProvider(std::string_view lit) : literal_(lit) {}
     std::string get(const void*, const DeviceCtx&) const override { return literal_; }
+};
+
+// Scalar array: iterates count_ elements, formats each with elemFn_, joins with sep_.
+// sep_ is runtime-configurable (recipe can override via ${name:sep=xxx}, spec §5).
+// elemFn_ is codegen-generated (snprintf per element type); count_ is from schema.
+class ScalarArrayProvider : public ValueProvider {
+    std::function<std::string(const void*, std::size_t)> elemFn_;
+    std::size_t count_;
+    std::string sep_;
+public:
+    ScalarArrayProvider(std::function<std::string(const void*, std::size_t)> elemFn,
+                        std::size_t count, std::string sep)
+        : elemFn_(std::move(elemFn)), count_(count), sep_(std::move(sep)) {}
+    std::string get(const void* structPtr, const DeviceCtx& ctx) const override;
 };
 
 // A whole key struct block: navigate to child, then join its fields with sep.
